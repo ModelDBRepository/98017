@@ -1,0 +1,603 @@
+/* View plots the results of the simulations. The idea is that one specifies
+* the total number of different kinds of plots and the total number of every
+* kind of plot one wants when creating the object.
+*
+* Then, one initializes the different kinds of plots with an Init function
+* Every time one calls reinit, a new set of plots is created. 
+* General plots of two vectors (xyPlots) are initialized separately, not in
+* the View constructor.
+*
+* Author: Fredrik Edin, 2003.
+* Address: freedin@nada.kth.se
+*/
+
+load_file("nrngui.hoc")
+
+begintemplate View
+
+    /* Public functions */
+    public vInit         // Sets up a number of voltage plot windows
+    public someTraj      // Plots a speciefied number of voltage trajectories
+    public basicV        // Plots voltage trajectories of every cell as well
+                         // as local field potentials
+    public lInit         // Sets up a number of LFP plot windows
+    public rInit         // Sets up a number of raster plot windows
+    public hInit         // Sets up a spike time histogram plot windows
+    public kInit         // Sets up a number of synchronicity plot windows
+    public gInit         // Sets up a "coherence between groups" plot windows
+    public tInit         // Sets up a time constant plot
+    public xyInit        // Sets up a number of plot windows
+    public reinit        // Creates a new set of plots for a new simulation
+    public update        // Called every time a voltage point is added to the 
+                         // voltage trace
+    public terminate     // Called when a simulation is terminated
+    public erase_plots   // Erase all plots
+    public plotAPs       // Plot rastergram (use with rInit)
+    public plotHist      // Plot action potential histogram (hInit)
+    public plotKappa     // Plot Kappa, a measure of synchronicity (kInit)
+    public plotCohGroups // Plot coherence between groups (gInit)
+    public plotTau       // Plot Kappa against synaptic time constant (tInit)
+    public eraseXY       // Erases a general xy plot
+    public plotXY        // plots an x vector against a y vector
+    
+    /* Public objects and variables */
+    public vPlot  // The voltage plots
+    public lPlot  // The LFP plots
+    public raster // The raster plots
+    public hist   // The spike time histograms
+    
+    /* Objects */
+    objref pvec[1][1] // Matrix of plots
+    objref vPlot[1]   // Vector of voltage plots
+    objref lPlot[1]   // Vector of local field potential plots
+    objref raster[1]  // Vector of rastergram plots
+    objref hist[1]    // Vector of histogram plots
+    objref network    // The network object
+    objref results    // The results object
+    objref kap[1]     // Vector of kappa plots
+    objref grp[1]     // Vector of CohGroup plots
+    objref tau1[1]    // Vector of tau1 plots
+    objref tau2[1]    // Vector of tau2 plots
+    objref xy[1]      // Vector of xy plots
+    objref xx         // Abscissa vector in xy plot
+    objref yy         // Ordinate vector in xy plot
+    objref xmin       // minimum x border of xy plot
+    objref xmax       // maximum x border of xy plot
+    objref ymin       // minimum y border of xy plot
+    objref ymax       // maximum y border of xy plot
+    objref newp       // See below
+    objref spikevec   // records and plots events to a netcon
+    objref vec        // Temporary vector
+    strdef str        // Temporary string
+    strdef title      // Title string of plot
+    
+    /* Creates a new View object */
+    proc init() { local i
+	print "View.init"
+	hmax = $1 // no of different plots
+	vmax = $2 // no of equal plots
+	if( numarg() > 2 ) {
+	    tStop = $3
+	    nCell = $4
+	    tSim = $5
+	}
+	if( hmax < 1 ) {
+	    hmax = 1 
+	}
+	if( vmax < 1 ) {
+	    vmax = 1 
+	}	
+	objref pvec[ hmax ][ vmax ]
+	xind = 0
+	index = -1
+	rv = 0
+	vP = 0 /* Kind of vPlot */
+	lP = 0
+    }
+    
+    /* Creates voltage trace plots
+    *
+    *(Arg 1, tSim: Start time of simulation)
+    */
+    proc vInit() { local i, width, j, k
+	print "view.vInit"
+	vP = 1
+	if( numarg() > 0 ) {
+	    tSim = $1
+	} else {
+	    tSim = 0
+	}
+	width = 3
+	objref vPlot[ vmax ]
+	for i = 0, vmax-1 {
+	    j = int( i / width )
+	    k = i - width * j
+	    vPlot[i] = new Graph(0)
+	    vPlot[i].label( 0.95, 0.58, "ms" )
+	    vPlot[i].label( 0.01, 0.85, "nS" )
+	    vPlot[i].label( 0.01, 0.75, "mV" )
+	    vPlot[i].view( tSim, -180, tStop - tSim, 450, 320 * k, 20 + 200 * j, 600, 230 )
+	    vPlot[i].erase()
+	    pvec[xind][i] = vPlot[i]
+	}
+	xind += 1
+    }
+    
+    /* Plots all voltage trajectories as well as LFP
+    */
+    proc basicV() {
+	if( !vP ) {
+	    if( numarg() > 1 ) {
+		tSim = $1
+	    } else {
+		tSim = 0
+	    }
+	    vInit(tSim)
+	    lInit(tSim)
+	    vP = 1
+	} else {
+	    print "nCell: ", nCell
+	    lPlot[index].label(1,0)
+	    sprint( str, "%s", "network.getLFP()" )
+	    lPlot[index].addexpr( str, 3, 1 )
+	    for i = 0, nCell - 1 {
+		vPlot[index].label(1,0) /* Set position for next label */
+		sprint( str, "%s%d%s", "network.cell[", i, "].getV()")
+		vPlot[index].addexpr( str, i%4 + 1, 1 )
+		sprint( str, "%s%d%s", "10 * network.cell[", i, "].getGsyn() + 70")
+		vPlot[index].addexpr( str, 3, 1 ) /* Blue */
+	    }
+	    sprint( str, "%s%d%s", "network.cell[", 200, "].getIK()")
+	    lPlot[index].addexpr( str, 1, 3 )
+	    sprint( str, "%s%d%s", "network.cell[", 200, "].getINa()")
+	    lPlot[index].addexpr( str, 2, 1 )
+	    sprint( str, "%s%d%s", "network.cell[", 200, "].getIsyn(0)")
+	    lPlot[index].addexpr( str, 2, 2 )
+	    sprint( str, "%s%d%s", "network.cell[", 200, "].getIsyn(1)")
+	    lPlot[index].addexpr( str, 2, 2 )
+	    sprint( str, "%s%d%s", "network.cell[", 200, "].getIsyn(2)")
+	    lPlot[index].addexpr( str, 2, 2 )
+	    sprint( str, "%s%d%s", "network.cell[", 200, "].getIsyn(1,1)")
+	    lPlot[index].addexpr( str, 2, 2 )
+	    vPlot[index].begin()
+	    lPlot[index].begin()
+	}
+    }
+    
+    /* Plots only a specified no of trajectories
+    *
+    * Arg 1, vec: A vector with cell indices
+    *(Arg 2, tSim: Start time of simulation)
+    */
+    proc someTraj() { local i, width, j, k
+	if( !vP ) {
+	    vec = $o1
+	    if( numarg() > 1 ) {
+		tSim = $2
+		vInit( tSim )
+	    } else {
+		vInit()
+	    }
+	    vP = 2
+	} else {
+	    spikevec = new Vector()
+	    //network.cell[ vec.x[vec.size()-1] ].pre_list[3].object(0).record( spikevec )
+	    NI = network.netborder.x[1]
+	    NE = network.netborder.x[2]-NI
+	    for i = 0, vec.size() - 1 {
+		if( vec.x[i] > network.netborder.x[1]-1 ) { /* ECell */ 
+		    vPlot[index].label(1,0) /* Set position for next label */
+		    sprint( str, "%s%d%s", "network.cell[",vec.x[i],"].getV()")
+		    vPlot[index].addexpr( str, 1, 1 ) /* black */
+		    sprint( str, "%s", "-10*(network.getMeanI(1,0) + network.getMeanI(1,2))" ) 
+		    lPlot[index].label(1,0) /* Set position for next label */
+		    lPlot[index].addexpr( str, 2, 1 ) /* red */
+		} else {
+		    vPlot[index].label(1,0) /* Set position for next label */
+		    sprint( str, "%s%d%s", "network.cell[",vec.x[i],"].getV()+150")
+		    vPlot[index].addexpr( str, 3, 1 ) /* blue */
+		    sprint( str, "%s%d%s%d%s", "-10*sum(network.cell[", vec.x[i], "].getIsyn(0)+network.cell[", vec.x[i], "].getIsyn(2))/NI + 30")
+		    sprint( str, "%s", "-10*(network.getMeanI(0,0) + network.getMeanI(0,2))" ) 
+		    lPlot[index].label(1,0) /* Set position for next label */
+		    lPlot[index].addexpr( str, 4, 1 ) /* green */
+		}	    
+	    }
+	    vPlot[index].begin()
+	    lPlot[index].begin()
+	    lPlot.line(0,30)
+	    lPlot.line(tStop,30)
+	    vPlot.line(0,150)
+	    vPlot.line(tStop,150)
+	}
+
+    }
+ 	
+	
+	
+    /* Creates LFP plots
+    *
+    *(Arg 1, tSim: Start time of simulation)
+    */
+    proc lInit() { local i, width, j, k
+	print "view.lInit"
+	objref lPlot[ vmax ]
+	if( numarg() > 0 ) {
+	    tSim = $1
+	} 
+	width = 3
+	for i = 0, vmax-1 {
+	    j = int( i / width )
+	    k = i - width * j
+	    lPlot[i] = new Graph(0)
+	    lPlot[i].label( 0.95, 0.58, "ms" )
+	    lPlot[i].label( 0.01, 0.85, "nS" )
+	    lPlot[i].label( 0.01, 0.75, "mV" )
+	    lPlot[i].view( tSim, -30, tStop - tSim, 40, 320 * k, 600 + 200 * j, 600, 230 )
+	    lPlot[i].erase()
+	    pvec[xind][i] = lPlot[i]
+	}
+	lP = 1
+	xind += 1
+    }
+    
+    /* Creates action potential rastergrams
+    *
+    *(Arg 1, tSim : The beginning of the simulation */
+    proc rInit() { local i, tSim, j, width
+	objref raster[ vmax ]
+	if( numarg() > 0 ) {
+	    tSim = $1
+	}
+	width = 4
+	for i = 0, vmax-1 {
+	    j = int( i / width ) 
+	    raster[i] = new Graph(0)
+	    raster[i].label( 0.95, 0.02, "ms" )
+	    raster[i].label( 0.01, 0.81, "neuron" )
+	    raster[i].view( tSim, 0, tStop-tSim, nCell, ( i - j * width ) * 320, 320 + 250 * j , 300, 230 )
+	    raster[i].erase()
+	    pvec[xind][i] = raster[i]
+	}
+ 	xind += 1
+	rv = 1
+    }
+    
+    /* Creates action potential time histograms
+    *
+    *(Arg 1, tSim : The beginning of the simulation) */
+    proc hInit() { local i
+	objref hist[ vmax ]
+	if( numarg() > 0 ) {
+	    tSim = $1
+	}
+	for i = 0, vmax-1 {
+	    hist[i] = new Graph(0)
+	    hist[i].label( 0.95, 0.02, "ms" )
+	    hist[i].label( 0.01, 0.81, "neuron" )
+	    hist[i].view( tSim, 0, tStop-tSim, nCell * 0.05, 940, 20 + 200 * i, 300, 230 )
+	    hist[i].erase()
+	    pvec[xind][i] = hist[i]
+	}
+	xind += 1
+    }
+    
+    /* Creates kappa plots. Kappa a measure of synchronicity from 
+    * Wang & Buszaki, 1996.
+    *
+    * Arg 1, no: The number of plots */
+    proc kInit() { local i
+	objref kap[ vmax ]
+	for i = 0, vmax-1 {
+	    kap[i] = new Graph(0)
+	    kap[i].label( 0.96, 0.02, "ms" )
+	    kap[i].label( 0.01, 0.81, "Kappa" )
+	    kap[i].view( 0, 0, tStop, nCell*1.2, 0, 270 + 100 * i, 300, 230 )
+	    kap[i].erase()
+	    pvec[xind][i] = kap[i]
+	}
+	xind += 1
+    }
+    
+    /* Creates "Coherence-between-groups"-plots. See Wang & Buszaki, 1996
+    *
+    * Arg 1, no: The number of plots */
+    proc gInit() { local i
+	objref grp[ vmax ]
+	for i = 0, vmax-1 {
+	    grp[i] = new Graph(0)
+	    grp[i].label( 0.96, 0.02, "|fi-fj|" )
+	    grp[i].label( 0.01, 0.81, "Kappa" )
+	    grp[i].view( 0, 0, tStop, nCell*1.2, 320, 270 + 100 * i, 300, 230 )
+	    grp[i].size( -0.2, 20, -0.2, 3 ) 
+	    grp[i].erase()
+	    pvec[xind][i] = grp[i]
+	}
+	xind += 1
+    }
+    
+    /* Creates synaptic time constant plots
+    *
+    * Arg 1, no: The number of plots */
+    proc tInit() { local i
+	objref tau1[ vmax ]
+	objref tau2[ vmax ]
+	for i = 0, vmax-1 {
+	    tau1[i] = new Graph(0)
+	    tau1[i].label( 0.96, 0.02, "ms" )
+	    tau1[i].label( 0.01, 0.81, "Hz" )
+	    tau1[i].view( 0, 0, 100, 100, 640, 270 + 100 * i, 300, 230)
+	    tau1[i].erase()
+	    pvec[xind][i] = tau1[i]
+	}
+	xind += 1
+	    
+	for i = 0, vmax-1 {
+	    tau2[i] = new Graph(0)
+	    tau2[i].label( 0.96, 0.02, "ms" )
+	    tau2[i].label( 0.01, 0.81, "Hz" )
+	    tau2[i].view( 0, 0, 100, 100, 960, 270 + 100 * i, 300, 230)
+	    tau2[i].erase()
+	    pvec[xind][i] = tau2[i]
+	}
+	xind += 1
+    }
+    
+    /* Initiates a number of general plots
+    *
+    * Arg 1, no: The number of plots */
+    proc xyInit() { local i, j, k
+	xyno = $1
+	newp = new Vector( xyno, 1 )
+	xmin = new Vector( xyno )
+	xmax= new Vector( xyno )
+	ymin = new Vector( xyno )
+	ymax= new Vector( xyno )
+	objref xy[ xyno ]
+	for i = 0, xyno-1 {
+	    xy[i] = new Graph(0)
+	    j = int( i / 2 )
+	    k = i - 2 * j
+	    xy[i].view( 0, 0, 100, 100, 320 + 350 * j, 0 + 300 * k, 300, 230)
+	    xy[i].erase()
+	}
+    }
+
+    
+    /* Reinitializes the view object. This is done after every simulation.
+    * 
+    * Arg 1, network: the network
+    * Arg 2, results: the object from which results are obtained */
+    proc reinit() {
+	print "View.reinit"
+	index += 1
+	print "index: ", index
+	network = $o1
+	if( rv == 1 ) {
+	    results = $o2
+	}
+	if( vP == 1 ) {
+	    basicV()
+	} else if( vP == 2 ) {
+	    someTrajectories()
+	}
+    }
+ 
+    /* Updates the voltage trace plot */
+    proc update() { local i
+	if( vP ) {
+	    vPlot[index].plot(t)
+	}
+	if( lP ) {
+	    lPlot[index].plot(t)
+	}
+    }
+    
+    /* Flushes and plots the voltage trace plot */
+    proc terminate() { local i, j
+	if( vP ) {
+	    vPlot[index].flush()
+	}
+	if( lP ) {
+	    lPlot[index].flush()
+	}
+	if( vP == 2 ) {
+	    for i = 0, spikevec.size() - 1 {
+		vPlot[index].mark( spikevec.x[i], 75, "o", 2 )
+	    }
+	}
+	doEvents()
+    }
+    
+    /* Erases the plots */
+    proc erase_plots() { local i
+	print "view.erase_plots"
+	for i = 0, hmax-1 {
+	    pvec[i][index].erase()
+	}
+	for i = 0, xyno - 1 {
+	    xy[i].erase()
+	}
+    }
+    
+    /* Plots the spikes in a raster plot */
+    proc plotAPs() { local i, cnt
+	print "View.plotAPs"
+	cnt = results.APCount.x[nCell] - 1
+	for i = 0, cnt {
+	    //print "spike ",i
+	    //print results.APCount.x[i]
+	    //print results.APTimes.x[i]
+	    raster[index].mark( results.APTimes.x[i], results.APCount.x[i]+1, "O", 2 )
+	}
+	raster[index].flush()
+	doEvents()
+    }
+    
+    /* Plots the spikes in a time histogram */
+    proc plotHist() { local i, cnt, bins, binw
+	print "View.plotHist"
+	results.binAPs(0.2)
+	cnt = results.APCount.x[nCell] - 1
+	bins = results.bins
+	binw = results.binw
+	hist.beginline
+	for i = 0,bins {
+	    hist[index].line(i*binw + tSim, results.APmx[nCell].x[i])
+	}
+	
+	hist[index].flush()
+	doEvents()
+    }
+    
+    /* Plots the coherence variable kappa, see Wang and Buszaki, Gamma 
+    * Oscillation by Synaptic Inhibition in a Hippocampal Interneuronal 
+    * Network Model, J.Neurosci, 1996, 16(20):6402-6413, for more 
+    * information about this measure */
+    proc plotKappa() { local i, siz, hmax, vmax
+	print "View.plotKappa"
+	print "index ", index
+	siz = results.tauvec.size()
+	hmax = results.tauvec.x[siz-1]
+	vmax = results.kappa.x[siz-1]
+	kap[index].size( 0, hmax, 0, vmax )
+	kap[index].beginline()
+	for i = 0, results.kappa.size()-1 {
+	    kap[index].line(results.tauvec.x[i],results.kappa.x[i])
+	}
+	kap[index].beginline()
+	for i = 0, results.dkdt.size()-1 {
+	    kap[index].line(results.dtauvec.x[i],results.dkdt.x[i])
+	}
+	kap[index].flush()
+	doEvents()
+    }
+    
+    /* plots the coherence within two groups of cells, one group which is
+    * synchronized, the other not. They are separated by their different 
+    * firing rates. The synchronized cells have firing rates above 34 Hz. 
+    *
+    *(Arg 1, border: The border frequency for separating the two groups of 
+    * cells. Default is 34 Hz.)
+    */
+    proc plotCohGroups() { local border, xc, yc
+	if( numarg() > 0 ) {
+	    border = $1
+	} else {
+	    border = 34
+	}
+	results.cohGroups( border )
+	for k = 0,2 {
+	    print "cohG[", k, "]"
+	    print "f\tkappa"
+	    grp[index].color(k + 2)
+	    if( k < 2 ) {
+		for i = 0, results.cohG[k].size() - 1 {
+		    for j = 0, i-1 {
+			xc = abs( results.rate.x[ results.cohG[k].x[i] ] - results.rate.x[ results.cohG[k].x[j] ] )
+			yc = results.cgK[k].x[i][j] + 2 * k
+			grp[index].mark( xc, yc, "O", 2 )
+			//print xc, "\t", yc
+		    }
+		}
+	    } else {
+		for i = 0, results.coMat.nrow() - 1 {
+		    for j = 0, results.coMat.ncol() - 1 {
+			xc = abs( results.rate.x[ results.cohG[0].x[i] ] - results.rate.x[ results.cohG[1].x[j] ] )
+			yc = results.cgK[k].x[i][j] + k
+			grp[index].mark( xc, yc, "O", 2 )
+		    }
+		}
+	    }
+	}
+    }
+    
+    /* Here, tau is plotted against the firing frequency,
+    * but should be plotted against the oscillation frequency
+    * Plots the coherence index kappa against the input vector (e.g., the 
+    * synaptic time constant tau) as well as the oscillation frequency against 
+    * the input vector. */
+    proc plotTau() {
+	results.ff()
+	imax = $o1.size()
+	jmax = int( results.rate.size() / imax )
+	for j = 0, jmax - 1 { 
+	    tau1[index].beginline()
+	    tau2[index].beginline()
+	    for i = 0, imax - 1 {
+		k = results.popCoh( 0.1 / results.rate.x[j * jmax + i] )
+    		tau1[index].line( $o1.x[j * jmax + i], k )
+    		tau2[index].line( $o1.x[j * jmax + i], results.rate.x[j * jmax + i] )
+	    }
+	}
+    }
+    
+    /* erases the xy plot */
+    proc eraseXY() { local ind
+	ind = $1
+	xy[ind].erase()
+    }
+    
+    /* plots any general data
+    *
+    * Arg 1, ind  : The index of the xyplot
+    * Arg 2, xx   : The x axis vector
+    * Arg 3, yy   : The y axis matrix 
+    *(Arg 4, mode : line (default, 0) or dot(1). )
+    */
+    proc plotXY() { local i, siz, mode, ind, titel, w, h
+	print "plotXY"
+	ind = $1
+	siz = $o2.size()
+	xx = $o2
+	yy = $o3
+	if( numarg() > 3 ) {
+	    title = $s4
+	} else {
+	    title = " "
+	}
+	if( numarg() > 4 ) {
+	    mode = $5
+	} else {
+	    mode = 0
+	}
+	// Vector is plotted as a new plot, not a continuation of last vector 
+	if( newp.x[ind] ) { 
+	    xmin.x[ind] = xx.min()
+	    xmax.x[ind] = xx.max()
+	    ymin.x[ind] = yy.min()
+	    ymax.x[ind] = yy.max()
+	    newp.x[ind] = 0
+	} else {
+	    if( xx.max() > xmax.x[ind] ) {
+		xmax.x[ind] = xx.max()
+	    }
+	    if( xx.min() < xmin.x[ind] ) {
+		xmin.x[ind] = xx.min()
+	    }
+	    if( yy.max() > ymax.x[ind] ) {
+		ymax.x[ind] = yy.max()
+	    }
+	    if( yy.min() < ymin.x[ind] ) {
+		ymin.x[ind] = yy.min()
+	    }
+	}
+	if( mode == 0 ) {
+    	    xy[ind].beginline()
+	    for i = 0, siz - 1 {
+    		xy[ind].line( xx.x[i], yy.x[i] )
+	    }
+	} else {
+	    for i = 0, siz - 1 {
+		xy[ind].mark( xx.x[i], yy.x[i], "O", 2 )
+	    }
+	}
+	//print "dim: ", xmin.x[ind], xmax.x[ind], ymin.x[ind], ymax.x[ind]
+	w = xmax.x[ind] - xmin.x[ind] 
+	h = ymax.x[ind] - ymin.x[ind] 
+	xy[ind].size( xmin.x[ind] - 0.1 * w, xmax.x[ind] + 0.1 * w, ymin.x[ind] - 0.1 * h, ymax.x[ind] + 0.5 * h ) 
+	xy[ind].label( xmin.x[ind] + 0.5 * w, ymax.x[ind] - 0.2 * h, title )
+	xy[ind].flush()
+	doEvents()
+    }
+      
+endtemplate View

@@ -1,0 +1,138 @@
+/* MyRandom generates random numbers in exactly the same way as the built-in 
+* Random function, but with an added function to generate random seeds.
+*
+* Author: Fredrik Edin, 2003.
+* Address: freedin@nada.kth.se
+*
+*/
+
+begintemplate MyRandom
+
+    objref r
+    strdef str, str2
+    objref fi
+    
+    /* Public functions */
+    public newSeed
+    public uniform
+    public normal
+    public discunif
+    public gamma
+    public erlang
+    public repick
+    
+    /* Creates an object with a random seed 
+    *
+    *(Arg 1, seed:   : A seed. If no argument is given, then the seed is random,) 
+    * 
+    * Return, rseed  : A seed 
+    */
+    proc init() {
+	if( numarg() > 0 ) {
+	    rseed = $1
+	    newSeed(rseed)
+	} else {
+	    newSeed()
+	}
+	state = 0 /* to remember the current distribution */
+    }  
+    
+    /* Generates a random seed 
+    *
+    *(Arg 1, rseed   : A seed. If no argument is given, then the seed is random,) 
+    * 
+    * Return, rseed  : A seed 
+    */
+    func newSeed() { local rseed, ind
+	if( numarg() > 0 ) {
+	    rseed = $1
+	} else {
+	    rseed = 12345
+	    str = "Seed is not random"
+	    // The following lines removes the decimal point and 
+	    // saves the seed to file in reversed order
+	    system("python RandomSeed.py")
+	    fi = new File()
+	    fi.ropen("SEED.txt")
+	    rseed = fi.scanvar(str)
+	    fi.close()
+	    str = "Seed is random"
+	}
+	//print "rseed ", rseed
+	r = new Random( rseed )
+	//print str
+	return rseed
+    }
+    
+    /* picks a number from the uniform distribution 
+    *
+    * return, p: a number drawn from the uniform distribution */ 
+    func uniform() { local p
+	p = r.uniform($1,$2)
+	state = 0
+	return p
+    }
+    
+    /* picks a number from the normal distribution
+    *
+    * return, p: a number drawn from the normal distribution */ 
+    func normal() { local p
+	p = r.normal($1,$2)
+	return p
+    }
+    
+    /* picks a random integer between high and low
+    *
+    * return, p: a discrete number drawn from the uniform distribution */ 
+    func discunif() { local p
+	p = r.discunif($1,$2)
+	state = 0
+	return p
+    }
+    
+    /* picks a random number from the Erlang distribution
+    *
+    * Arg 1, alpha
+    * Arg 2, beta
+    * return, p: a discrete number drawn from the Erlang distribution */ 
+    func erlang() { local p
+	alpha = $1
+	beta = $2
+	p = r.erlang(alpha,beta)
+	return p
+    }
+    
+    /* private faculty function */
+    func fac() { local m, n
+	n = $1
+	m = 1
+	for i = 2, n {
+	    m = m * i
+	}
+	return m
+    }
+    
+    /* picks a random number from the Gamma distribution
+    * f(x) = x^(alpha-1)*exp(-x/beta)/(Gamma(p)*beta^alpha)
+    *
+    * Arg 1, alpha
+    * Arg 2, beta
+    * return, p: a discrete number drawn from the uniform distribution */ 
+    func gamma() { local p
+	alpha = $1
+	beta = $2
+	print "Gamma not implemented"
+	//p = r.gamma( alpha, beta )
+	p = r.repick()
+	return p
+    }    
+    
+    /* picks a number from the distribution last chosen 
+    *
+    * return, p: a number drawn from the distribution chosen last */ 
+    func repick() { local p
+	p = r.repick()
+	return p
+    }
+ 
+endtemplate MyRandom

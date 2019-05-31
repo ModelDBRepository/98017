@@ -1,0 +1,948 @@
+/*
+* This template defines a laboratory with a cell, and the functions allows
+* the user to calculate single cell properties such as fI-curves.
+*
+* Author: Fredrik Edin, 2003.
+* Address: freedin@nada.kth.se
+*
+*/
+
+load_file( "ECell.hoc" )
+load_file( "ICell.hoc" )
+
+begintemplate LabCell
+
+    /* Objects */
+    objref electrode  // The electrode to the cell (not used now)
+    objref cell      // The cell in the laboratory, 1 or 3 compartments
+    objref ns         // Netstim, a stimulating spike train
+    objref nss[1]     // Vector of stimulating spike trains
+    objref exinvec    // Vector with synapses for every spike train (st) in nss
+    objref intervec   // Vector with intervals between spikes for st in nss
+    objref nspikevec  // Vector with no of spikes for st in nss
+    objref wvec       // Vector with synaptic weights st in nss
+    objref shiftvec   // Vector with phase shifts between st in nss
+    objref noisevec   // Vector with noise level for st in nss ( between 0-1 )
+    objref samevec    // Vector where element e at index i says that indices i 
+                      // and e should have the same source
+    objref cvode      // The variable time step integrator used
+    objref gvec       // Vector with GABA currents over time
+    objref avec       // Vector with AMPA currents over time
+    objref nvec       // Vector with NMDA currents over time
+    objref Xgvec      // Vector with external GABA currents over time
+    objref Xavec      // Vector with external AMPA currents over time
+    objref Xnvec      // Vector with external NMDA currents over time
+    objref tvec[6]    // Five vectors for gvec, avec, nvec, Xgvec, Xavec, Xnvec
+    objref cvec       // The sum of gvec, avec, nvec, Xgvec, Xavec, Xnvec
+    objref vPlot      // A plot (for time-dependent variables)
+    objref vPlot2     // Another plot (for time-dependent variables)
+    objref xyPlot     // A third plot (any graph)
+    objref Ivec       // Vector with applied currents
+    objref fIvec      // Vector with frequencies at currents in Ivec
+    objref Ifvec      // Vector with external frequencies at frequencies fIvec
+    objref xx         // Vector with abscissa values for xyPlot
+    objref yy         // Vector with ordinate values for xyPlot
+    objref spikevec[1]// Spike vector vector
+    objref tmp
+    objref tmp2
+    objref sn
+    strdef str        // Temporary string
+    strdef pl         // Temporary string (plot or not?)
+    strdef pl1        // Temporary string (possibility to plot or not?)
+    objref file       // Temporary file object
+    
+    /* Public functions */
+    public fICurve    // Calculate the fI-curve of the cell
+    public effFICurve // Calculate the fI-curve of the cell
+    public PSP        // Stimulate the cell with a PSP
+    public PSPtrain   // Stimulate the cell with a train of PSPs
+    public PSPtrain2  // Stimulate the cell with a train of PSPs
+    public PSPtrains  // Stimulate the cell with several trains of PSPs
+    public oneSpike   // Evoke a spike
+    public iClamp     // Apply an I-clamp current
+    public PSC        // Calculate the total charge in a PSC
+    public plotXY     // Plot x and y values contained in vector arguments
+    public resetWvec
+    
+    /* Public objects or variables */
+    public eCell      // The cell in the laboratory
+    public cvode      // The numerical time step integrator
+    public charge     // Total charge of an EPSC
+    public gabaChrg   // Charge through an GABA channel during a PSC
+    public ampaChrg   // Charge through an AMPA channel during a PSC
+    public nmdaChrg   // Charge through an NMDA channel during a PSC
+    public XgabaChrg  // Charge through an external GABA channel during a PSC
+    public XampaChrg  // Charge through an external AMPA channel during a PSC
+    public XnmdaChrg  // Charge through an external NMDA channel during a PSC
+    public gvec       // Vector with GABA currents over time
+    public avec       // Vector with AMPA currents over time
+    public nvec       // Vector with NMDA currents over time
+    public Xgvec      // Vector with external GABA currents over time
+    public Xavec      // Vector with external AMPA currents over time
+    public Xnvec      // Vector with external NMDA currents over time
+    public cvec       // The sum of gvec, avec, nvec, Xavec, Xnvec
+    public tvec       // Five vectors for gvec, avec, nvec, Xavec, Xnvec
+    public vPlot      // A plot (for time-dependent variables)
+    public vPlot2     // Another plot (for time-dependent variables)
+    public xyPlot     // Another plot (for any variables)
+    public Ivec, fIvec, Ifvec // Vectors for fI-curve
+    public nss        // A vector with netstim objects
+    public spikevec   // Vector recording spikes
+    public exinvec    // Vector needed to specify parameters for synaptic  
+    public intervec   // input into the cell
+    public nspikevec  
+    public wvec    
+    public noisevec 
+    public samevec 
+    public shiftvec
+     
+    /* Creates an ECellTest object
+    *
+    *(Arg 1, var_dt:  0 or no argument = use cvode
+    *                               >0 = fix dt)
+    *(Arg 2, pl      : plot = plot, Other arguments or no arguments = no plot)
+    *(Arg 3, stats   : Statistics printed if there are more than two args.) 
+    *(Arg 4, celltype: 1 or nothing = E-Cell, 2 = I-Cell)
+    *(Arg 5, E       : Absolute tolerance of the CVode)
+    */
+    proc init() { local i, n1, n2
+	
+	/* Cell parameters */
+	if( numarg() > 3 ) {
+	    celltype = $4
+	} else {
+	    celltype = 1
+	}
+	if( celltype == 1) {
+	    cell = new ECell()
+	} else {
+	    cell = new ICell()
+	}
+	
+	if( numarg() > 0 ) {
+	    var_dt = $1
+	} else {
+	    var_dt = 0 
+	}
+	cvode = new CVode(1)
+	cvode.active(var_dt <= 0)
+	if( var_dt > 0 ) {
+	    dt = var_dt
+	}
+	print "Cvode active: ", cvode.active()
+	if( numarg() > 1 ) {
+	    pl1 = $s2
+	} else {
+	    pl1 = "no plot"
+	}
+	if( numarg() > 2 ) {
+	    printStat = 1
+	} else {
+	    printStat = 0
+	}
+	
+	if( strcmp( pl1, "plot" ) == 0 ) {
+	    plotPoss = 1
+	} else {
+	    plotPoss = 0
+	}
+	
+	if( numarg() > 4 && cvode.active() ) {
+	    E = $5
+	    cvode.atol( E )
+	}
+	
+	if( plotPoss ) {
+	    
+	    /* Voltage graphs */
+	    vPlot = new Graph(0)
+	    vPlot.view( 100, -80, 200, 20, 0, 20, 600, 230 )
+	    vPlot.erase()
+	    vPlot.label(1,0) /* Set position for next label */
+	    vPlot2 = new Graph(0)
+	    vPlot2.view( 100, -80, 200, 20, 0, 320, 600, 230 )
+	    vPlot2.erase()
+	    vPlot2.label(1,0) /* Set position for next label */
+	    
+	    /* Voltages */
+	    str = "cell.getV()"
+	    vPlot.addexpr( str, 1, 1 ) /* Black */
+	    
+	    /* Intracellular calcium */
+	    str =  "cell.getCai(0)"
+	    //vPlot2.addexpr( str, 1, 1 ) /* Black */
+	    str = "cell.getCai(2)"
+	    //vPlot2.addexpr( str, 2, 1 ) /* Red */
+	    str =  "cell.getGCan()"
+	    //vPlot2.addexpr( str, 3, 2 ) /* Black */
+	    str =  "cell.getmCan()"
+	    //vPlot2.addexpr( str, 4, 1 ) /* Red */
+	    
+	    /* Synaptic states */
+	    str = "cell.syn[2].s"
+	    //vPlot2.addexpr( str, 2, 1 ) /* Red */
+	    str = "cell.syn[4].s"
+	    //vPlot2.addexpr( str, 4, 1 ) /* Green */
+	    
+	    /* Synaptic weights */
+	    n1 = 3
+	    n2 = 2
+	    for i = n1, n2 {
+		sprint( str, "cell.getWsyn(%d,0,1)+70", i )
+		//vPlot.addexpr( str, 4, 1 ) /* Green */
+	    }
+	    
+	    /* Channel variables */
+	    /* Soma */
+	    /* Na g */
+	    sprint( str, "cell.getINa()" )
+	    //vPlot2.addexpr( str, 3, 2 ) /* Blue */
+	    /* K i */
+	    sprint( str, "cell.getIK()" )
+	    //vPlot2.addexpr( str, 2, 2 ) /* Red */
+	    /* Synaptic currents */
+	    sprint( str, "cell.getIsyn(0,0)" )
+	    vPlot2.addexpr( str, 1, 2 )
+	    sprint( str, "cell.getIsyn(3,2)" )
+	    vPlot2.addexpr( str, 2, 2 )
+	    sprint( str, "cell.getIsyn(2,1)" )
+	    vPlot2.addexpr( str, 3, 2 )
+	    sprint( str, "cell.getIsyn(2,2)" )
+	    vPlot2.addexpr( str, 4, 2 )
+	    	    
+	    xyPlot = new Graph(0)
+	    xyPlot.view( 0, 0, 100, 100, 640, 270, 300, 230)
+	    xyPlot.erase()
+	}
+	print "ECellTest.init"
+    }
+    
+    proc reGraph() {
+	vPlot.begin()
+	vPlot2.begin()
+    }
+    
+    /* produces an fI-curve 
+    *
+    * Arg 1, Lo   : Lower stimulus intensity in uA/cm2
+    * Arg 2, Hi   : Higher stimulus intensity in uA/cm2
+    * Arg 3, n    : No of data points. 
+    *(Arg 4, dur  : Stimulus length
+    *(Arg 5, nCell: number of afferent cells)
+    *(Arg 6, exin : 0 = Gaba, 1 = Ampa, 2 = Nmda)
+    *(Arg 6, w    : Weight in mS/cm2)
+    */
+    proc fICurve() { local dur, maxi, i, lo, hi, n, imu, ext
+	
+	lo = $1
+	hi = $2
+	n = $3
+	if( numarg() > 3 ) {
+	    dur = $4
+	} else {
+	    dur = 1000
+	}
+	if( numarg() > 4 ) {
+	    nCell = $5
+	    exin = $6
+	    w = $7
+	} else {
+	    nCell = 1
+	    exin = 1
+	    w = 0.016
+	}
+	
+	fIvec = new Vector( n )
+	Ifvec = new Vector( n )
+	Ivec = new Vector( n )
+	Ivec.indgen( lo, hi, (hi-lo)/(n-1) )
+
+	/* Runs simulations of duration dur at different currents */
+	for i = 0, n - 1 {
+	    print "Iter #", i+1, "a"
+	    imu = Ivec.x[i] /* Current in uA/cm2 */
+	    iClamp( imu, dur, "plot" )
+	    //PSPtrain2( imu, 1000, dur, "plot" )
+	    fIvec.x[i] = nspk / ( dur / 1000 )
+	    /*print "Iter #", i+1, "b"
+	    if( fIvec.x[i] == 0 ) {
+		Ifvec.x[i] = 0
+	    } else {
+		PSPtrain( exin, w, 1000/(fIvec.x[i]*nCell), fIvec.x[i]*nCell*(dur/1000), 1, "plot" )
+		Ifvec.x[i] = -curr
+	    }*/
+	}
+		
+	if( plotPoss ) {
+	    plotXY( Ivec, fIvec )
+	    plotXY( Ifvec, fIvec )
+	}
+	file = new File()
+	file.wopen("I-ECell1Comp.vec")
+	Ivec.vwrite( file )
+	file.close()
+	file.wopen("f-ECell1Comp.vec")
+	fIvec.vwrite( file )
+	file.close()
+	file.wopen("If-ECell1Comp.vec")
+	//Ifvec.vwrite( file )
+	file.close()
+    }
+    
+    /* produces an effective fI-curve (current source is synaptic activity
+    * and fI-curve is calculated with background synaptic activity) 
+    *
+    * Arg 1, Lo   : Lower stimulus intensity in Hz ( x 1024 for 1024 cells )
+    * Arg 2, Hi   : Higher stimulus intensity in Hz ( x 1024 for 1024 cells )
+    * Arg 3, n    : No of data points. 
+    * Arg 4, bk   : Background strength (weight, f = 1000 always)
+    * Arg 5, w    : Stimulus weight
+    * Arg 6, N    : No of cells
+    *(Arg 7, dur  : Stimulus length
+    *(Arg 8, exin : 0 = Gaba, 1 = Ampa, 2 = Nmda(default))
+    *(Arg 9, wI   : GABA weight
+    */
+    proc effFICurve() { local dur, maxi, i, lo, hi, n, imu, ext, del
+	
+	lo = $1
+	hi = $2
+	n = $3
+	bk = $4
+	w = $5
+	N = $6
+	if( numarg() > 6 ) {
+	    dur = $7
+	} else {
+	    dur = 1000
+	}
+	if( numarg() > 7 ) {
+	    exin = $8
+	} else {
+	    exin = 2
+	}
+	if( numarg() > 8 ) {
+	    wI = $9
+	} else {
+	    wI = -1
+	}
+	
+	if( celltype == 1 && exin > 0 ) {
+	    m = 3 
+	} else {
+	    m = 2
+	}
+	m = m + (wI>0)
+	
+	exinvec = new Vector(m)
+	intervec = new Vector(m)
+	nspikevec = new Vector(m)  
+	wvec = new Vector(m)
+	shiftvec = new Vector(m-1) 
+	noisevec = new Vector(m) 
+	samevec = new Vector(m,-1)
+	start = 150
+	del = 1000
+	
+	for i = 0, m-2 { 
+	    noisevec.x[i] = 1
+	    shiftvec.x[i] = 0
+	    wvec.x[i] = w
+	}
+	noisevec.x[m-1] = 1
+	wvec.x[m-1] = w
+	if( wI>0 ) {
+	    wvec.x[m-1] = wI
+	    intervec.x[m-1] = 1000/3*256
+	    nspikevec.x[m-1] = (dur+del)/intervec.x[m-1]
+	    exinvec.x[m-1] = 0
+	    samevec.x[m-1] = -1
+	}
+	
+	intervec.x[0] = 1000/1000
+	nspikevec.x[0] = dur+del
+	wvec.x[0] = bk
+	
+	if( celltype == 1 && exin > 0 ) {
+	    exinvec.x[0] = 16
+	    exinvec.x[1] = 15 + exin
+	    exinvec.x[2] = 9 + exin
+	    samevec.x[2] = 1
+	} else if( celltype == 1 ) {
+	    exinvec.x[0] = 16
+	    exinvec.x[1] = 3 + exin
+	} else {
+	    exinvec.x[0] = 4
+	    exinvec.x[1] = 3 + exin
+	}
+	
+	fIvec = new Vector( n )
+	Ivec = new Vector( n )
+	Ivec.indgen( lo, hi, (hi-lo)/(n-1) )
+
+	/* Runs simulations of duration dur at different currents */
+	for i = 0, n - 1 {
+	    print "---------------------"
+	    print " "	    
+	    print "Iter #", i+1, "a"
+	    //imu = Ivec.x[i] /* Current in uA/cm2 */
+	    //iClamp( imu, dur, "plot" )
+	    //PSPtrain2( imu, 10000, dur, "plot" )
+	    if( Ivec.x[i] == 0 ) {
+		nspikevec.x[1] = 0
+		intervec.x[1] = 1
+	    } else {
+		intervec.x[1] = 1000 / (N*Ivec.x[i])
+		nspikevec.x[1] = (del+dur)/intervec.x[1]
+	    }
+	    fIvec.x[i] = PSPtrains( start, del, exinvec, intervec, nspikevec, shiftvec, noisevec, wvec, samevec )
+	    print "Frequency: ", Ivec.x[i], " Weight: ", w
+	    print "Firing rate: ", fIvec.x[i], " Hz"
+	    //fIvec.x[i] = nspk / ( dur / 1000 )
+	    if( plotPoss && i > 0 ) {
+		plotXY( Ivec.c(0,i), fIvec.c(0,i) )
+		//tmp = new Vector(2)
+		//tmp.indgen(fIvec.x[0], Ivec.x[i])
+		tmp2 = new Vector(2)
+		tmp2.indgen(Ivec.x[0], Ivec.x[i])
+		plotXY( tmp2, tmp2 )
+	    }
+	}
+		
+	file = new File()
+	file.wopen("I-ECell1Comp.vec")
+	Ivec.vwrite( file )
+	file.close()
+	file.wopen("f-ECell1Comp.vec")
+	fIvec.vwrite( file )
+	file.close()
+    }
+    
+    /* Produce a PSP
+    *
+    * Arg 1, exin : 0 = GABA synapse
+    *               1 = AMPA synapse
+    *               2 = NMDA synapse
+    * Arg 2, w    : The synaptic weight in mS/cm2
+    *(Arg 3, ext  :  -1 = both local and external
+    *                 0 = local
+    *                 1 = external
+    */
+    proc PSP() { local exin, w, i
+	exin = $1
+	w = $2
+	if( numarg() > 2 ) {
+	    ext = $3
+	} else {
+	    ext = -1
+	}
+	cell.soma ns = new MyNetStim(.5)
+	ns.interval = 0
+	ns.number = 1
+	ns.start = 150
+	ns.noise = 0
+	if( ext ) {
+	    cell.pre_list[exin+3].append( new NetCon( ns, cell.syn[exin+3], 0, delay, 0 ) )
+	    cell.setWsyn( exin+3, w )
+	}
+	if( ext < 1 ) {
+	    cell.pre_list[exin].append( new NetCon( ns, cell.syn[exin], 0, delay, 0 ) )
+	    cell.setWsyn( exin, w )
+	}
+	//cell.connect_pre( ns, 0, exin, 1 )
+	cell.activate_syn( 1, exin )
+	tStop = 400
+	if( plotPoss ) {
+	    vPlot.size( 0, tStop, -80, 20 )
+	    vPlot2.size( 150, 155, 0, 0.001 )
+	    spikevec = new Vector()
+	    cell.pre_list[exin+(ext>0)*3].object(0).record( spikevec )
+	    run("plot")
+	    for i = 0, spikevec.size()-1 {
+		vPlot2.mark( spikevec.x[i], 0.0006, "o", 2 )
+	    }
+	} else {
+	    run("no plot")
+	}
+    }
+    
+    /* Produce a PSC. Charge flowing through different synapses is recorded
+    *
+    * Arg 1, gaba : gaba conductance in mS/cm2
+    * Arg 2, nmda : nmda conductance in mS/cm2
+    * Arg 3, ampa : ampa conductance in mS/cm2
+    * Arg 4, Xgaba: external ampa conductance in mS/cm2
+    * Arg 5, Xampa: external ampa conductance in mS/cm2
+    * Arg 6, Xnmda: external nmda conductance in mS/cm2
+    *(Arg 7, pl   : plot = plot, other arguments or no argument = don't plot. )
+    *(Arg 8, disp : 1 = display data on screen, 0 = do not display)
+    * Return charge : Total PSC charge in uC/cm2
+    */
+    xopen( "../../NeuronKlasser/integral.hoc" )
+    func PSC() { local gaba, nmda, ampa, Xampa, Xnmda, i, low, disp
+	
+	gaba = $1
+	ampa = $2
+	nmda = $3
+	Xgaba = $4
+	Xampa = $5
+	Xnmda = $6
+	nCell = $7
+	tStop = 1500 //FIX ME hitta lagom längd
+	if( numarg() > 7 ) {
+	    pl = $s8
+	} else {
+	    pl = "no plot"
+	}
+	if( numarg() > 7 ) {
+	    disp = $8
+	} else {
+	    disp = 1
+	}
+	if( disp ) { 
+	    print " "
+	    print "ECellTest.PSC"
+	}	
+	
+	cell.soma ns = new NetStim(.5)
+	ns.interval = 0
+	ns.number = 1
+	ns.start = 150
+	ns.noise = 0
+	cell.connect_pre( ns, 0, 0, 1 )
+	cell.connect_pre( ns, 0, 1, 1 )
+	cell.connect_pre( ns, 0, 2, 1 )
+	cell.pre_list[3].append( new NetCon( ns, cell.syn[3], 0, delay, 0 ) )
+	cell.pre_list[4].append( new NetCon( ns, cell.syn[4], 0, delay, 0 ) )
+	cell.pre_list[5].append( new NetCon( ns, cell.syn[5], 0, delay, 0 ) )
+	cell.setWsyn( 0, gaba )
+	cell.setWsyn( 1, ampa )
+	cell.setWsyn( 2, nmda )
+	cell.setWsyn( 0, Xgaba, file, 0, 1 )
+	cell.setWsyn( 1, Xampa, file, 0, 1 )
+	cell.setWsyn( 2, Xnmda, file, 0, 1 )
+	cell.activate_syn( 1 )
+	if( cvode.active() ) {
+	    for i = 0, 5 {
+		tvec[i] = new Vector(10000)
+	    }
+	    cvec = new Vector(10000)
+	    gvec = new Vector(10000)
+	    avec = new Vector(10000)
+	    nvec = new Vector(10000)
+	    Xgvec = new Vector(10000)
+	    Xavec = new Vector(10000)
+	    Xnvec = new Vector(10000)
+	    cvode.record( &cell.syn[0].i, gvec, tvec[0] )
+	    cvode.record( &cell.syn[1].i, avec, tvec[1] )
+	    cvode.record( &cell.syn[2].i, nvec, tvec[2] )
+	    cvode.record( &cell.syn[3].i, Xavec, tvec[3] )
+	    cvode.record( &cell.syn[4].i, Xnvec, tvec[4] )
+	    cvode.record( &cell.syn[5].i, Xnvec, tvec[5] )
+	} else {
+	    cvec = new Vector( tStop / dt )
+	    gvec = new Vector( tStop / dt )
+	    avec = new Vector( tStop / dt )
+	    nvec = new Vector( tStop / dt )
+	    Xgvec = new Vector( tStop / dt )
+	    Xavec = new Vector( tStop / dt )
+	    Xnvec = new Vector( tStop / dt )
+	    for i = 0, 5 {
+		tvec[i] = new Vector( tStop / dt )
+		tvec[i].indgen( 0, dt )
+	    }
+	    gvec.record( &cell.syn[0].i )
+	    avec.record( &cell.syn[1].i )
+	    nvec.record( &cell.syn[2].i )
+	    Xgvec.record( &cell.syn[3].i )
+	    Xavec.record( &cell.syn[4].i )
+	    Xnvec.record( &cell.syn[5].i )
+	}
+	vPlot.size( 150, 350, -70, -40 )
+	run( pl, disp )
+	cvec = gvec.c.add( avec ).add( nvec ).add( Xavec ).add( Xgvec ).add( Xnvec )
+	tvec[1] = tvec[0].c.indvwhere( "<=", ns.start )
+	low = tvec[1].x[ tvec[1].size()-1 ]
+	/* Current is nA, time is ms, convert to density charge in uC/cm2
+	* Cell area = 1e-6 cm2
+	* 1nA * 1ms / 1AREA = 1pC/1e-6cm2 = 1uC/cm2 
+	* ---> no conversion needed */
+	charge = integral( tvec[0], cvec, low )
+	gabaChrg = integral( tvec[0], gvec, low )
+	ampaChrg = integral( tvec[0], avec, low )
+	nmdaChrg = integral( tvec[0], nvec, low )
+	XgabaChrg = integral( tvec[0], Xgvec, low )
+	XampaChrg = integral( tvec[0], Xavec, low )
+	XnmdaChrg = integral( tvec[0], Xnvec, low )
+	
+	ns = new Vector()
+	return charge
+    }
+    
+    /* Produce a PSP train. Records the injected charge.
+    *
+    * Arg 1, exin    : 0 = GABA synapse
+    *                  1 = AMPA synapse
+    *                  2 = NMDA synapse
+    * Arg 2, w       : The synaptic weight in mS/cm2
+    * Arg 3, interval: Time between PSPs in ms
+    * Arg 4, nSpike  : The number of PSPs
+    *(Arg 5, ext     : -1 = both local and external
+    *                   0 = local
+    *                   1 = external
+    *(Arg 6, plot    : "plot" or "no plot")
+    */
+    proc PSPtrain() { local mode, interval, loc, exin, w, i
+	exin = $1
+	w = $2
+	interval = $3
+	nSpike = $4
+	if( numarg() > 4 ) {
+	    ext = $5
+	} else {
+	    ext = -1
+	}
+	if( numarg() > 5 && plotPoss ) {
+	    pl = $s6
+ 	} else {
+	    pl = "no plot"
+	}
+	delay = 0
+	cell.disconnectCell()
+	cell.soma ns = new MyNetStim(.5)
+	ns.interval = interval
+	ns.number = nSpike
+	ns.start = 0
+	ns.noise = 0
+	print "interval ", interval, "number ", nSpike
+	if( ext ) {
+	    cell.pre_list[exin+3].append( new NetCon( ns, cell.syn[exin+3], 0, delay, 0 ) )
+	    cell.setWsyn( exin, w, cvec, 0, 1 ) //w = 15
+	}
+	if( ext < 1 ) {
+	    cell.pre_list[exin].append( new NetCon( ns, cell.syn[exin], 0, delay, 0 ) )
+	    cell.setWsyn( exin, w )
+	}
+	cell.activate_syn( 1 )
+	tStop = nSpike * interval + ns.start 
+	if( cvode.active() ) {
+	    tvec[0] = new Vector(10000)
+	    tvec[1] = new Vector(10000)
+	    Xavec = new Vector(10000)
+	    avec = new Vector(10000)
+	    cvode.record( &cell.syn[exin+2].i, Xavec, tvec[0] )	    
+	    cvode.record( &cell.syn[exin].i, avec, tvec[1] )
+	} else {
+	    tvec[0] = new Vector( int( tStop / dt * 1.05 ) )
+	    tvec[1] = new Vector( int( tStop / dt * 1.05 ) )
+	    cvec = new Vector( int( tStop / dt * 1.05 ) )
+	    avec = new Vector( int( tStop / dt * 1.05 ) )
+	    Xavec = new Vector( int( tStop / dt * 1.05 ) )
+	    avec.record( &cell.syn[1].i )
+	    Xavec.record( &cell.syn[3].i )
+	    tvec[0].indgen( dt )
+	    tvec[1].indgen( dt )
+	}
+	if( strcmp( pl, "plot" ) == 0 ) {
+	    vPlot.size( 0, tStop, -80, 20 )
+	    vPlot2.size( 0, 10, 0, 0.001 )
+	    spikevec = new Vector()
+	    cell.pre_list[exin+3].object(0).record( spikevec )
+	    run("plot")
+	    for i = 0, spikevec.size()-1 {
+		vPlot2.mark( spikevec.x[i], 0.0006, "o", 2 )
+	    }
+	    vPlot2.flush()
+	    doEvents()
+	} else {
+	    run("no plot")
+	}
+	cvec = avec.c.add( Xavec )
+	tvec[0] = tvec[0].c( 0, cvec.size()-1 )
+	low = 0 /* Index for start of integral */
+	/* Current is nA, time is ms, convert to density charge in uC/cm2
+	* Cell area = 1e-6 cm2
+	* 1nA * 1ms / 1AREA = 1pC/1e-6cm2 = 1uC/cm2 
+	* ---> no conversion needed */
+	curr = integral( tvec[0], cvec, low ) / ( (tvec[0].x[tvec[0].size()-1] - tvec[0].x[0] )/1000)
+	/* 1uC/cm2 / (1ms/1000) = 1uC/cm2 / 1s = 1uA/cm2 */
+	print "weight: ", w
+    }
+    
+    /* VERSION NO 2 */
+    /* Produce a PSP train
+    *
+    * Arg 1, exin    : 1 = AMPA synapse
+    *                  2 = NMDA synapse
+    * Arg 2, w       : The synaptic weight in mS/cm2
+    * Arg 3, rate    : Rate of PSPs in Hz
+    * Arg 4, tStop   : End of simulation
+    *(Arg 5, plot    : "plot" or "no plot")
+    */
+    proc PSPtrain2() { local mode, interval, loc, exin, w, i
+	w = $1
+	rate = $2
+	tStop = $3
+	cell.disconnectCell()
+	cell.poissonExternal(rate, w)
+	if( numarg() > 3 && plotPoss ) {
+	    pl = $s4
+	} else {
+	    pl = "no plot"
+	}
+	cell.activate_syn( 1 )
+	//tStop = tStop + 150	
+	if( strcmp( pl, "plot" ) == 0 ) {
+	    vPlot.size( 0, tStop, -80, 20 )
+	    vPlot2.size( 0, 100, 0, 0.001 )
+	    spikevec = new Vector()	    
+	    cell.pre_list[4+12*celltype].object(0).record( spikevec )
+	    run("plot")
+	    for i = 0, spikevec.size()-1 {
+		vPlot2.mark( spikevec.x[i], 0.0006, "o", 2 )
+	    }
+	    vPlot2.flush()
+	    doEvents()
+	} else {
+	    run("no plot")
+	}
+    }
+    
+    /* Produce several PSP trains. All arguments are vectors with 
+    * parameters for the PSP trains, such that all parameters with a common 
+    * vector index belong to the same PSP train. Parameters as below.
+    *
+    * Arg 1, start    : Start of netstim arrivals
+    * Arg 2, del      : Delay before starting to measure activity
+    * Arg 3, exinvec  : 1 if the channel is excitatory, 0 if it is inhibitory)
+    * Arg 4, intervec : Time between PSPs in ms
+    * Arg 5, nspikevec: The number of PSPs
+    * Arg 6. shiftvec : The delay to the following PSP train
+    * Arg 7. noisevec : The delay to the following PSP train
+    *(Arg 8, wvec     : The weight of the synapse in mS/cm2)
+    *(Arg 9, samevec  : If one wants several PSPs to come from the same source)
+    * Return freq: Firing frequency in Hz
+    */
+    func PSPtrains() { local i, j, n1, n2, start, del, loc, freq
+	freq = 0
+	cell.disconnectCell()
+	start = $1
+	del = $2
+	exinvec = $o3
+	intervec = $o4
+	nspikevec = $o5
+	shiftvec = $o6
+	noisevec = $o7
+	if( numarg() > 7 ) {
+	    wvec = $o8
+	} else {
+	    wvec = new Vector( intervec.size(), 0.1 )
+	}
+	if( numarg() > 8 ) {
+	    samevec = $o9
+	} else {
+	    samevec = new Vector( intervec.size(), -1 )
+	}
+	objref nss[ intervec.size() ]
+	for i = 0, intervec.size() - 1 {
+	    loc = int( exinvec.x[i] / 6 ) 
+	    if( i>0 && samevec.x[i] >= 0 ) {
+		nss[ i ] = nss[ samevec.x[i] ]
+	    } else {
+		if( celltype == 1 ) {
+		    cell.soma[ loc ] nss[ i ] = new MyNetStim(.5)
+		} else {
+		    cell.soma nss[ i ] = new MyNetStim(.5)
+		}
+	    } 
+	    if( samevec.x[i] < 0 ) { /* Otherwise, this is already set */
+		nss[ i ].interval = intervec.x[i]
+		nss[ i ].number = nspikevec.x[i]
+		if( i > 0 ) {
+		    nss[ i ].start = start + shiftvec.x[i-1]
+		} else {
+		    nss[ i ].start = start
+		}
+		nss[ i ].noise = noisevec.x[i]
+	    }
+	    if( celltype == 1 ) {
+		exin = ( exinvec.x[i] - 6 * loc )
+		cell.connect_pre( nss[ i ], 0, exin, loc, 1 )
+		cell.setWsyn( exin, wvec.x[i], loc )
+	    } else {
+		cell.connect_pre( nss[ i ], 0, exinvec.x[i], 1 )
+		cell.setWsyn( exinvec.x[i], wvec.x[i] )
+	    }
+	}
+	cell.activate_syn( 1 )
+	//resetWvec()
+	tvec = new Vector( intervec.size() )
+	for i = 0, intervec.size() - 1 {
+	    tvec.x[i] = intervec.x[i] * nspikevec.x[i]
+	}
+	tStart = start + del
+	tStop = tvec.max() + tStart - del
+	if( plotPoss ) {
+	    vPlot.size( tStart, tStop, -80, 90 )
+	    vPlot2.size( tStart, tStop, 0, 0.002 )
+	    objref spikevec[ intervec.size() ]
+	    for i = 0, intervec.size() - 1 {
+		spikevec[i] = new Vector()	    
+		cell.pre_list[ exinvec.x[i] ].object(0).record( spikevec[i] )
+	    }
+	    run("plot", 1, tStart )
+	    for i = 0, intervec.size() - 1 {
+		for j = 0, spikevec[i].size()-1 {
+		    vPlot2.mark( spikevec[i].x[j], 0.0006*i, "o", 2 )
+		}
+	    }
+	    vPlot2.flush()
+	    doEvents()
+	} else {
+	    run("no plot", 1, tStart )
+	}
+	freq = nspk * 1000 / (tStop - tStart)
+	return freq
+    }
+    
+    /* Produces one spike 
+    */
+    proc oneSpike() { local amp, del, dur
+	amp = 4
+	del = 150
+	dur = 6
+	cell.setIapp( amp, del, dur )
+	tStop = 500
+	if( plotPoss ) {
+	    vPlot.size( 100, 200, -70, 135 )
+	    vPlot2.size( 155, 165, -15, 5 )
+	    run("plot")
+	} else {
+	    run("no plot") 
+	}
+    }
+    
+    /* IClamp
+    * Arg 1, amp: Amplitude in uA/cm2
+    * Arg 2, dur: Duration in ms
+    * Arg 3, str: no plotting if "no plot", otherwise plotting
+    */
+    proc iClamp() { local amp, dur, loc
+	amp = $1
+	del = 350
+	dur = $2
+	if( celltype == 1 ) {
+	    loc = 2 /* Input only into distal dendrite */
+	    cell.setIapp( amp, del, dur, loc )
+	} else {
+	    cell.setIapp( amp, del, dur )
+	}
+	tStop = del + dur + 100
+	if( strcmp( $s3, "plot" ) == 0 && plotPoss ) {
+	    vPlot.size( del, del+dur+30, -70, 70 )
+	    vPlot2.size( del, del+250, -50, 25 )
+	    //vPlot.size( del - 50, tStop, -80, 50 )
+	    run($s3)
+	} else {
+	    run("no plot")
+	}
+    }
+    
+    proc resetWvec() { local i, j, k, m
+	print "Resetting weight vector"
+	for j = 0, cell.synCnt - 1 {
+	    for k = 0, cell.pre_list[ j ].count() - 1 {
+		for m = 1, cell.pre_list[ j ].object(k).wcnt() - 1 {
+		    cell.pre_list[ j ].object(k).weight[m] = 0
+		}
+	    }
+	}
+    }
+    
+    /* A common function used by all other functions to run a simulation */
+    proc run() { local i, disp
+		
+	/* Do simulation */
+	if( numarg() > 0 && strcmp( pl1, "plot" ) == 0 ) {
+	    pl = $s1
+	} else {
+	    pl = "no plot"
+	}
+	if( numarg() > 1 ) {
+	    disp = $2
+	} else {
+	    disp = 1
+	}
+	if( numarg() > 2 ) {
+	    tStart = $3
+	} else {
+	    tStart = 0
+	}
+	if( disp ) {
+	    print ""
+	    print "ECellTest.run"
+	}
+	t = 0
+	nspk = 0
+	steps = 0
+	if( strcmp( pl, "plot" ) == 0 ) {
+	    vPlot.erase()
+	    vPlot2.erase()
+	    reGraph()
+	}
+	finitialize()
+	
+	while( t < tStop ) {
+	    if( cvode.active() ) {
+		for i = 0, 9 {
+	 	    fadvance()
+		}
+		steps = steps + 1
+	    } else {
+ 		for i = 0, 9 {
+	 	    fadvance()
+		    steps = steps + 1
+ 		}
+	    }
+ 	    if( cell.spike() == 1 && t > tStart ) {
+	 	nspk = nspk + 1
+	    }
+	    
+	    if( strcmp( pl, "plot" ) == 0 ) {
+		vPlot.plot(t)
+		vPlot2.plot(t)
+	    }
+	}
+	if( strcmp( pl, "plot" ) == 0 ) {
+	    vPlot.flush()
+	    vPlot2.flush()
+ 	    doEvents()
+	}
+	if( disp ) {
+	    print "finish time: ", t
+	    print "ECellTest.run...  nspk: ", nspk
+	    print "ECellTest.run... steps: ", steps
+	}
+	if( cvode.active() && printStat ) {
+	    cvode.statistics()
+	}
+    }
+    
+    /* A general plot. Vectors xx and yy are plotted against eachother */
+    proc plotXY() {
+	siz = $o1.size()
+	xx = $o1
+	yy = $o2
+	xmin = xx.min()
+	ymin = yy.min()
+	xmax = xx.max()
+	ymax = yy.max()
+	xyPlot.size( xmin, xmax, ymin, ymax ) 
+	xyPlot.beginline()
+	for i = 0, siz - 1 {
+    	    xyPlot.line( xx.x[i], yy.x[i] )
+	}
+	xyPlot.flush()
+	doEvents()
+    }
+    
+endtemplate LabCell

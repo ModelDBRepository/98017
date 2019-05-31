@@ -1,0 +1,1096 @@
+/** 
+ * Net.hoc defines a network with nCell cells. The cells are separated into
+ * modules consisting of an inhibitory and an excitatory subnet. Cells within
+ * and between such subnets are connected all to all with connection strengths
+ * either flat or normally distributed relative to distance.
+ *
+ * Author: Fredrik Edin, 2003.
+ * Address: freedin@nada.kth.se
+ *
+ */
+
+load_file( "nrngui.hoc" )
+load_file( "MyRandom.hoc" )
+load_file( "ECell.hoc" )
+load_file( "ICell.hoc" )
+load_file( "ECellIAF.hoc" )
+load_file( "ICellIAF.hoc" )
+
+begintemplate Net
+
+    /* Public objects and variables */
+    public cell      // Cell array containing all cells in the network
+    public nCell     // No of cells
+    public theta     // Direction specificity vector for the cells (radians)
+    public Ivec      // Vector with currents into every cell
+    public netborder // Vector with border indices between subnets in cell
+    public vx        // Rate of external afferents
+   
+    /* Public functions */
+    public connectCells     // Connect cells and set cell weights
+    public activate_syn     // Activates or deactivates the synapses
+    public cue              // Sets a cue (IClamp) to every cell
+    public update           // Does updating of data during a simulation
+    public resetV           // sets voltage of cells to a prespecified or 
+                            // random potential
+    public getMeanI         // get mean current in uA/cm2 in network. 
+                            // Inhibitory and excitatory cells are considered
+                            // equally large
+    public getMeanI2        // get mean current in uA/cm2 in network, but fast.
+    public getMeanIIon      // get mean ion currents
+    public getLFP           // get network LFP
+    public saveConn         // Save connection parameters
+    public saveParams       // Save other parameters
+    public conn             // Connect two modules
+    public thetaToCell      // converts an angle to a cell index
+       
+    /* Private functions */
+    // resetWvec        // Resets the weight vector
+    
+    /* Objects */
+    objref cell[1]   // Cell array
+    objref r         // MyRandom object
+    objref poisrand  // Another MyRandom object
+    objref results   // Results object
+    objref theta     // Direction specificity vector for the cells
+    objref Ivec      // Vector with currents into every cell
+    objref netborder // Border indices between nets
+    objref PARAM     // List with parameter vectors (first vector is general
+    objref file      // File object
+    objref tmp       // Temporary object
+    objref tmp2      // Temporary object
+    objref rAMPAc    // AMPA conductances to get x% AMPA charge
+    objref rNMDAc    // NMDA conductances to get 100-x% NMDA charge
+    objref CUE       // List with vectors of cue parameters. Index 5*i to 
+                     // 5*(i-1) contains cues for cells netborder.x[i] to 
+                     // netborder.x[i+1]-1
+    objref EXPv       // Vector with parameters for experiments. First value is
+                     // experiment number, followed by parameters for the experiment.)
+    objref rNMDAvec  // Vector with relative NMDA conductances
+    objref exinvec   // Vector with synapses through which two populations are connected
+    objref wvec      // Vector with connection weights between two cell populations
+    objref locvec    // Vector with compartments at which a cell is connected
+    objref jm        // Vector with Jm values in order Jmee, Jmie, Jmii, Jmei
+    strdef str    
+    strdef str2       
+    strdef ion
+    strdef strEI      
+    strdef strEE      
+    objref locE       
+    objref locI
+    objref loc
+
+    /* Creates a Net object
+    * 
+    * Arg 1, results   : Object where results are stored
+    * Arg 2, netborder : The starting indices of the nets, e.g. if there are
+    *                    NE ECells and NI ICells, then netborder.x[0] = 0
+    *                    netborder.x[1] = NI and netborder.x[2] = NI+NE
+    * Arg 3, PARAM     : Vector with parameters
+    * Arg 4, CUE       : Vector with cues.
+    * Arg 5, EXPv       : Vector with experimental parameters. First value is
+    *                    experiment number, followed by parameters for the experiment.
+    */
+    proc init() { local i, imu, ivar, v0, ind
+	
+	print ""
+	print "Net.init"
+	
+	/* Initial constants, etc */
+	results = $o1
+	netborder = $o2
+	PARAM = $o3
+	CUE = $o4
+	EXPv = $o5
+	
+	r = new MyRandom()
+	poisrand = new MyRandom()
+	
+	nettype = PARAM.object(0).x[0]
+	nmod = PARAM.object(0).x[1]
+	nrow = PARAM.object(0).x[2]
+	
+	/* create cells, and an angle for every cell. */
+	nCell = netborder.x[ netborder.size()-1 ]
+	Ivec = new Vector( nCell )
+        objref cell[nCell]
+	theta = new Vector( nCell )
+	for k = 0, netborder.size()-2 {
+            for i = 0, netborder.x[k+1]-netborder.x[k]-1 {
+		theta.x[netborder.x[k]+i] = 2*PI*i / (netborder.x[k+1]-netborder.x[k])
+		ind = netborder.x[k]+i
+		nind = 6+4*int(k/2)+k%2
+		if( k%2 == 0 && PARAM.object(0).x[nind] == 1 ) {
+		    cell[ind] = new ICell()
+		} else if( k%2 == 0 && PARAM.object(0).x[nind] == 2 ) {
+		    cell[ind] = new ICellIAF()
+		} else if( k%2 == 1 && PARAM.object(0).x[nind] == 1 ) {
+		    cell[ind] = new ECell()
+		} else if( k%2 == 1 && PARAM.object(0).x[nind] == 2 ) {
+		    cell[ind] = new ECellIAF()
+	 	}
+		cell[ind].setID(ind)
+	    }
+	}
+	if( EXPv.x[0] == 10000 ) { /* This needn't be used yet, therefore 10000 = no real number */
+	    v0 = $5
+	    resetV( v0 )
+	} else {
+	    print "random potential"
+	    resetV()
+	}
+	connectCells() 
+	
+	print "Net.init finished"
+    }
+    
+    
+    /* Connects the cells and sets the synaptic weight. */
+    proc connectCells() { local w, w1, w2, d, factor, F, gNMDA, gAMPA, relTot, relNMDA
+	print "Net.connectCells"
+	
+	/* Loading data for setting rNMDA */
+	file = new File()
+	file.ropen("rNMDA.txt")
+	rNMDAc = new Vector()
+	while( !file.eof() ) {
+	    rNMDAc.append( file.scanvar() ) 
+	}
+	file.close()
+	//print "rNMDA"
+	//rNMDAc.printf()
+	file.ropen("rAMPA.txt")
+	rAMPAc = new Vector()
+	while( !file.eof() ) {
+	    rAMPAc.append( file.scanvar() ) 
+	}
+	file.close()
+	//print "rAMPA"
+	//rAMPAc.printf()
+	
+	/* Loading data for setting rC */
+	if( EXPv.x[0] == 5 ) {
+	    file.ropen("rC1v.txt")
+	    tmp = new Vector()
+	    while( !file.eof() ) {
+		tmp.append( file.scanvar() ) 
+	    }
+	    file.close()
+	    file.ropen("rC2v.txt")
+	    tmp2 = new Vector()
+	    while( !file.eof() ) {
+		tmp2.append( file.scanvar() ) 
+	    }
+	    file.close()
+	    
+	    Nt = 1  /* No of time points in EXPv vector */
+	    while( EXPv.x[Nt+1] > EXPv.x[Nt] ) {
+		Nt = Nt + 1
+	    }
+	    
+	    /* Change weights */
+	    for i = 0, EXPv.x[Nt+1]-1 {
+		rOld = EXPv.x[Nt+2+9*i]
+		ind = int( rOld*100+0.5 )
+		if( ind > 0 ) {
+		    toN1 = EXPv.x[Nt+3+9*i]
+		    frN1 = EXPv.x[Nt+4+9*i]
+		    toMod1 = int( (toN1+2)/2 )
+		    frMod1 = int( (frN1+2)/2 )
+		    toN2 = EXPv.x[Nt+7+9*i]
+		    frN2 = EXPv.x[Nt+8+9*i]
+		    toMod2 = int( (toN2+2)/2 )
+		    frMod2 = int( (frN2+2)/2 )
+		    
+		    /* kop: 0=Ii, 1=Ie, 2=Ei, 3=Ee */
+		    kop1 = 2*(toN1%2) + (frN1%2)*(frN1>=0) + (EXPv.x[Nt+5+9*i]>3)*(frN1<0)
+		    for j = 1, PARAM.count()-1 {
+			if( toMod1 == PARAM.object(j).x[0] && frMod1 == PARAM.object(j).x[1] ) {
+			    w1 = PARAM.object(j).x[8+kop1]
+			    PARAM.object(j).x[8+kop1] = w1 * tmp.x[ind]
+			}
+		    }
+		    kop2 = 2*(toN2%2) + (frN2%2)*(frN2>=0) + (EXPv.x[Nt+9+9*i]>3)*(frN2<0)
+		    for j = 1, PARAM.count()-1 {
+			if( toMod2 == PARAM.object(j).x[0] && frMod2 == PARAM.object(j).x[1] ) {
+			    PARAM.object(j).x[8+kop2] = PARAM.object(j).x[8+kop2] + tmp2.x[ind]*w1
+			}
+		    }
+		}
+	    }
+	}
+	
+	vx0 = 1000 /* Rate of external afferents * # afferents */
+	vx = 1000
+		
+	/* Connect all cells */
+	print "Connecting to precells"
+	jm = new Vector((nrow-3)*4)
+	for m = 1, nrow-3 {
+	    print "m ",m 
+	    to = PARAM.object(m).x[0]
+	    from = PARAM.object(m).x[1]
+	    print "to ", to
+	    print "from ", from
+
+	    deldist = PARAM.object(m).x[2]
+	    mu = PARAM.object(m).x[3]
+	    std2 = PARAM.object(m).x[4]
+	    
+	    relNMDA = PARAM.object(m).x[7]
+	    rNMDAvec = new Vector()
+	    if( relNMDA < 1 ) {
+		rNMDAvec.append(rAMPAc.x[int(100*relNMDA)])
+	    } 
+	    if( relNMDA > 0 ) { 
+		rNMDAvec.append(rNMDAc.x[int(100*relNMDA)])
+	    } 
+	    NMDAsz = rNMDAvec.size()
+	    print "rNMDAvec"
+	    rNMDAvec.printf()
+	    print "relNMDA", relNMDA
+	    
+	    locI = new Vector()
+	    locE = new Vector()
+	    
+	    /* Compartments on E-Cells with synapses*/
+	    for i = 0, 1 {
+		tmp = new Vector()
+		par = PARAM.object(m).x[5+i]
+		if( par > 99 ) {
+		    s1 = int(par/100)
+		    s2 = par-s1*100
+		    tmp.append(s1)
+		    s1 = int(s2/10)
+		    s2 = s2-s1*10
+		    tmp.append(s1)
+		    tmp.append(s2)
+		} else if( par>9 ) {
+		    s1 = int(par/10)
+		    s2 = par-s1*10
+		    tmp.append(s1)
+		    tmp.append(s2)
+		} else {
+		    tmp.append(par)
+		}
+		tmp.sort()
+		str = ""
+		for k = 0, tmp.size()-1 {
+		    if( k > 0 ) {
+			sprint( str, "%s%s", str, ", " )   
+		    }
+		    if( tmp.x[k] == 0 ) {
+			sprint( str, "%s%s", str, "soma" )   
+		    } else if( tmp.x[k] == 1 ) {
+			sprint( str, "%s%s", str, "d1" )   
+		    } else {
+			sprint( str, "%s%s", str, "d2" )   
+		    }
+		}
+		sprint( str, "%s%s", str, " på " )
+		if( i == 0 ) {
+		    locI.copy( tmp )
+		    strEI = str
+		    sprint( str,"I -> %sE", str )
+		} else if( i == 1 ) {
+		    locE.copy( tmp )
+		    strEE = str
+		    sprint( str,"E -> %sE", str )
+		}
+		print str
+	    }
+	    
+	    Ii = PARAM.object(m).x[8]
+	    Ie = PARAM.object(m).x[9]
+	    Ei = PARAM.object(m).x[10]
+	    Ee = PARAM.object(m).x[11]
+	    
+	    print "Connections:"
+	    print "Ii:  ", Ii
+	    print "Ie:  ", Ie
+	    print "Ei:  ", Ei
+	    print "Ee:  ", Ee
+	    
+	    Jpii = PARAM.object(m).x[12]
+	    Jpie = PARAM.object(m).x[14]
+	    Jpei = PARAM.object(m).x[16]
+	    Jpee = PARAM.object(m).x[18]
+	    stdii = PARAM.object(m).x[13]
+	    stdie = PARAM.object(m).x[15]
+	    stdei = PARAM.object(m).x[17]
+	    stdee = PARAM.object(m).x[19]
+	    
+	    print "Jpii:  ", Jpii
+	    print "Jpie:  ", Jpie
+	    print "Jpei:  ", Jpei
+	    print "Jpee:  ", Jpee
+	    print "stdii:  ", stdii
+	    print "stdie:  ", stdie
+	    print "stdei:  ", stdei
+	    print "stdee:  ", stdee
+	    if( from > 0 ) {
+		
+ 		/* Set I->I weights */
+		if( Ii > 0 ) {
+		    print "Setting I->I weights"
+		    exinvec = new Vector(1,0)
+		    locvec = new Vector(1,0)
+		    wvec = new Vector(1,Ii)
+		    jm.x[4*(m-1)] = conn( 2*(to-1), 2*(from-1), wvec, locvec, exinvec, Jpii, stdii, deldist, mu, std2 )
+		}
+		
+		/* Set I->E weights */
+		if( Ei > 0 ) {
+		    exinvec = new Vector(1,0)
+		    print "Setting I->E weights"
+		    wvec = new Vector(locI.size(),Ei)
+		    jm.x[4*(m-1)+1] = conn( 2*to-1, 2*(from-1), wvec, locI, exinvec, Jpei, stdei, deldist, mu, std2 )
+		}
+		
+		/* Set E->I weights */
+		if( Ie > 0 ) {
+		    print "Setting E->I weights"
+		    locvec = new Vector(1,0)
+		    exinvec = new Vector(NMDAsz)
+		    exinvec.indgen(1+(NMDAsz==1&&relNMDA>0),1)
+		    wvec = new Vector(NMDAsz,Ie)
+		    wvec.mul(rNMDAvec)
+		    jm.x[4*(m-1)+2] = conn( 2*(to-1), 2*from-1, wvec, locvec, exinvec, Jpie, stdie, deldist, mu, std2 )
+		}
+		
+		/* Set E->E weights */
+		if( Ee > 0 ) {
+		    print "Setting E->E weights"
+		    exinvec = new Vector(NMDAsz)
+		    exinvec.indgen(1+(NMDAsz==1&&relNMDA>0),1)
+		    locsz = locE.size()
+		    wvec = new Vector( locsz*NMDAsz )
+		    for i = 0, locsz-1 {
+			wvec.copy( rNMDAvec.c.mul(Ee), i*NMDAsz )
+		    }
+		    jm.x[4*(m-1)+3] = conn( 2*to-1, 2*from-1, wvec, locE, exinvec, Jpee, stdee, deldist, mu, std2 )
+		}
+		
+	    } else if( from == 0 ) {
+		/* Poisson source to E and I */
+		for k = 0, locE.size()-1 {
+		    for j = netborder.x[2*to-1], netborder.x[2*to] - 1 {
+			rseed = poisrand.repick()
+			cell[j].poissonExternal( vx, Ee*rAMPAc.x[int(100*relNMDA)]*vx0/vx, Ee*rNMDAc.x[int(100*relNMDA)]*vx0/vx, locE.x[k], rseed )
+		    }
+		}
+		for i = netborder.x[2*(to-1)], netborder.x[2*to-1] - 1 {
+		    rseed = poisrand.repick()
+		    cell[i].poissonExternal( vx, Ie*rAMPAc.x[int(100*relNMDA)]*vx0/vx, Ie*rNMDAc.x[int(100*relNMDA)]*vx0/vx, rseed )
+		}
+	    }
+	}
+	/* Add cues */
+        len = ( CUE.size() ) / 5
+	for j = 0, len-1 {
+	    pos = CUE.x[5*j+2]
+	    netn = netborder.indwhere( ">", pos ) - 1
+	    cue( CUE.x[5*j], CUE.x[5*j+1], pos, CUE.x[5*j+3], CUE.x[5*j+4], netn, locE )
+	}
+
+	//resetWvec() /* Tar bort konstigheter i viktvektorn */
+    }
+    
+    /* Converts an angle to a cell index 
+    *
+    * Arg 1, ang : The angle
+    * Arg 2, netn: The number of the net
+    * return: A cell index
+    */
+    func thetaToCell() { local N, netn, ang, ind
+	ang = $1
+	netn = $2
+	N = netborder.x[netn+1]-netborder.x[netn]
+	ind = netborder.x[netn] + int( N*ang/(2*PI) )
+	return ind
+    }
+    
+    /* Mean synaptic input in net 
+    *
+    * Arg 1, netT  : No of the downstream net
+    *(Arg 2, exin  : 0 = GABA, 1 = AMPA, 2 = NMDA, 
+    *                3 = ext GABA, 4 = ext AMPA, 5 = ext NMDA)
+    *(Arg 3, loc   : 0 = soma, 1 = proximal dendrite, 2 = distal dentrite)
+    *
+    * return: Mean synaptic input in uA/cm2 
+    */
+    func getMeanI() { local exin, loc, sum, i
+	netT = $1	
+	if( numarg() > 1 ){
+	    exin = $2
+	} else {
+	    exin = -1
+	}
+	if( numarg() > 2 ) {
+	    loc = $3
+	} else {
+	    loc = -1
+	}
+	sum = 0
+	
+	m1 = netborder.x[netT]
+	m2 = netborder.x[netT+1]
+	if( netT%2 ) {
+	    for i = m1, m2-1 {
+		I = cell[i].getIsyn( exin, loc )
+		sum = sum + I
+		Ivec.x[i] = I
+	    }
+	} else {
+	    for i = m1, m2-1 {
+		I = cell[i].getIsyn( exin )
+		sum = sum + I
+		Ivec.x[i] = I
+	    }
+	}
+	return sum / (m2-m1)
+    }
+    
+    /* Mean synaptic input in net. Only records whole net synaptic currents, 
+    * so cannot separate two sources of currents passing through the 
+    * same synapse as well. Therefore faster.
+    *
+    * Arg 1, netT  : No of the downstream net
+    *(Arg 2, exin  : 0 = GABA, 1 = AMPA, 2 = NMDA, 
+    *                3 = ext GABA, 4 = ext AMPA, 5 = ext NMDA)
+    *(Arg 3, loc   : 0 = soma, 1 = proximal dendrite, 2 = distal dentrite)
+    *
+    * return: Mean synaptic input in uA/cm2 
+    */
+    func getMeanI2() { local exin, loc, sum, i
+	netT = $1
+	if( netT > netborder.size()-2 ) {
+	    return 0
+	}	
+	if( numarg() > 1 ){
+	    exin = $2
+	} else {
+	    exin = -1
+	}
+	if( numarg() > 2 ) {
+	    loc = $3
+	} else {
+	    loc = -1
+	}
+	sum = 0
+
+	m1 = netborder.x[netT]
+	m2 = netborder.x[netT+1]
+	if( exin == 8 || exin == -1 ) { // electrode current
+	    if( netT%2 ) {
+		for i = m1, m2-1 {
+		    I = cell[i].getQ_I( loc )
+		    sum = sum + I
+		}
+	    } else {
+		for i = m1, m2-1 {
+		    I = cell[i].getQ_I()
+		    sum = sum + I
+		}
+	    }
+	}
+	if( exin < 8 ) { // synaptic channel currents
+	    if( netT%2 ) {
+		for i = m1, m2-1 {
+		    I = cell[i].getIsyn( exin, loc )
+		    sum = sum + I
+		}
+	    } else {
+		for i = m1, m2-1 {
+		    I = cell[i].getIsyn( exin )
+		    sum = sum + I
+		}
+	    }	
+	}
+	return sum
+    }
+
+    /* Mean ionic currents in net.
+    *
+    * Arg 1, netT  : No of the net
+    * Arg 2, ion   : Choices: 'ICa-s', 'ICa-d2', 'IKS', 'IK', 'INa',
+    *                'INap', 'IA', 'Cai-s', 'Cai-d2', 'ICan'
+    *
+    * return: Mean synaptic input in uA/cm2 
+    */
+    func getMeanIIon() { local exin, loc, sum, i
+	netT = $1
+	if( netT > netborder.size()-2 ) {
+	    return 0
+	}	
+	ion = $s2
+	if( numarg() > 2 ) {
+	    ch = 0
+	} else {
+	    loc = -1
+	}
+	sum = 0
+
+	m1 = netborder.x[netT]
+	m2 = netborder.x[netT+1]
+	if( strcmp( ion, "ICa-s" ) ) {
+	    for i = m1, m2-1 {
+		I = cell[i].getICa( 0 )
+		sum = sum + I
+	    }
+	} else if( strcmp( ion, "ICa-d2" ) ) {
+	    for i = m1, m2-1 {
+		I = cell[i].getICa( 2 )
+		sum = sum + I
+	    }
+ 	} else if( strcmp( ion, "IKS" ) ) {
+	    for i = m1, m2-1 {
+		I = cell[i].getICa( 2 )
+		sum = sum + I
+	    }
+ 	} else if( strcmp( ion, "IK" ) ) {
+	    if( netT%2 ) {
+		for i = m1, m2-1 {
+		    I = cell[i].getIK()
+		    sum = sum + I
+		} 
+	    } else {
+		for i = m1, m2-1 {
+		    I = cell[i].getIK()
+		    sum = sum + I
+		}	
+	    }
+ 	} else if( strcmp( ion, "INa" ) ) {
+	    if( netT%2 ) {
+		for i = m1, m2-1 {
+		    I = cell[i].getINa()
+		    sum = sum + I
+		} 
+	    } else {
+		for i = m1, m2-1 {
+		    I = cell[i].getINa()
+		    sum = sum + I
+		}	
+	    }
+ 	} else if( strcmp( ion, "INap" ) ) {
+	    for i = m1, m2-1 {
+		I = cell[i].getINap()
+		sum = sum + I
+	    }
+ 	} else if( strcmp( ion, "Cai-s" ) ) {
+	    for i = m1, m2-1 {
+		I = cell[i].getCai(0)
+		sum = sum + I
+	    }
+ 	} else if( strcmp( ion, "Cai-d2" ) ) {
+	    for i = m1, m2-1 {
+		I = cell[i].getCai( 2 )
+		sum = sum + I
+	    }
+ 	} else if( strcmp( ion, "ICan" ) ) {
+	    for i = m1, m2-1 {
+		I = cell[i].getICan()
+		sum = sum + I
+	    }
+	}
+
+	return sum
+    }
+
+
+
+    /* Momentary LFP in the net. The LFP is synthesized by measuring the 
+    * difference between the potential in the distal apical dendrite and 
+    * the potential in loc, which is either the proximal apical dendrite
+    * or the soma.
+    *
+    * Arg 1, md  : No of the module: 1,2,...
+    *(Arg 2, loc : 0, soma, 1, proximal apical dendrite. Default, proximal)
+    *
+    * return: Momentary network LFP in mV/cm2 
+    */
+    func getLFP() { local V, sum, loc
+	md = $1
+	if( numarg() < 2 ) {
+	    loc = 1
+	} else {
+	    loc = $2
+	}
+
+	if( md > (netborder.size()-1)/2 ) {
+	    return 0
+	}	
+	sum = 0
+
+	m1 = netborder.x[2*md-1]
+	m2 = netborder.x[2*md]
+	
+	/* LFP are extracellular potentials. A negative LFP is 
+	* caused by a more negative extracellular field in the
+	* distal dentrite than in the proximal, i.e. a more positive
+	* intracellular field in the distal dendrite. 
+	*/
+	
+        for i = m1, m2-1 {
+	    V = cell[i].getV( loc ) - cell[i].getV( 2 )
+	    sum = sum + V
+	}
+
+	return sum
+    }
+
+    
+    /* Local function: Resets the weight vector */
+    proc resetWvec() { local i, j, k, m
+	print "Resetting weight vector"
+	for i = 0, nCell - 1 {
+	    for j = 0, cell[i].synCnt - 1 {
+		for k = 0, cell[i].pre_list[ j ].count() - 1 {
+		    for m = 1, cell[i].pre_list[ j ].object(k).wcnt() - 1 {
+			cell[i].pre_list[ j ].object(k).weight[m] = 0
+		    }
+		}
+	    }
+	}
+    }
+    
+    /* Activate synapses in the network 
+    *
+    *(Arg 1, fac: 1 if activating synapses that are connected to a NetCon
+    *             0 if inactivating synapses)
+    *(Arg 2, exin : 0 = GABA synapse
+    *               1 = AMPA synapse
+    *               2 = NMDA synapse
+    *               3 = External GABA synapse
+    *               4 = External AMPA synapse
+    *               5 = External NMDA synapse)
+    */
+    proc activate_syn() { local i, fac
+	if( numarg() < 1 ) {
+	    fac = 1
+	} else {
+	    fac = $1
+	}
+	if( fac == 1 ) {
+	    print "Activating synapses"
+	} else {
+	    print "Inactivating synapses"
+	}
+	if( numarg() > 1 ) {
+	    exin = $2
+	    for i = 0, nCell - 1 {
+		cell[i].activate_syn( fac, exin )
+	    }
+	} else {
+	    for i = 0, nCell - 1 {
+		cell[i].activate_syn( fac )
+	    }
+	}
+    }
+    
+    /* Resets the membrane potential of all the cells. This is 
+    * all that is needed to restart the net 
+    *
+    *(Arg 1, v0: The reset potential in mV)
+    */
+    proc resetV() { local i, j
+    	if( numarg() > 0 ) {
+	    v0 = $1
+	    for i = 0, nCell - 1 {
+		cell[i].setV( v0 )
+	    }
+	} else {
+	    r.uniform( -70, -55 )
+	    for i = 0, nCell - 1 {
+		j = r.repick()
+		cell[i].setV( j )
+		//print cell[i], ", vO: ",  j
+	    }
+	}
+    }
+    
+   /* Set a cue
+    *
+    * Arg 1, del : The start time of the cue in ms
+    * Arg 2, dur : The duration of the cue in ms
+    * Arg 3, pos : The position of the cue cells
+    * Arg 4, wid : The width of the cue cells 
+    * Arg 5, amp : The amplitude of the cue in uA/cm2
+    * Arg 6, nnum: The net number (index of netborder)
+    *(Arg 7, loc : Vector with compartments. Default = all compartments)
+    */
+    proc cue() { local i, j, amp, del, dur, N, wid, pos, nnum
+	del = $1
+	dur = $2
+	pos = $3
+	wid = $4
+	amp = $5
+	nnum = $6
+	N = netborder.x[nnum+1]-netborder.x[nnum]
+	print "del ", del
+	print "dur ", dur
+	print "pos ", pos
+	print "wid ", wid
+	print "amp ", amp
+	print "nnum ", nnum
+	print "N ", N
+	tmp = new Vector(wid)
+	tmp.indgen(pos,1)
+	for i = 0, tmp.size()-1 {
+	    if( tmp.x[i] > netborder.x[nnum+1]-1 ) { 
+		tmp.x[i] = tmp.x[i] - N
+	    }
+	}
+	
+	if( numarg()> 6 ) {
+	    loc = $o7
+	    for i = 0, tmp.size()-1 {
+		for j = 0, loc.size()-1 {
+		    cell[ tmp.x[i] ].addCue( amp, del, dur, loc.x[j] )
+		}
+	    }
+	} else {
+	    for i = 0, tmp.size()-1 {
+		cell[ tmp.x[i] ].addCue( amp, del, dur )
+	    }
+	}
+    }
+    
+    /* Reports the spike times and the cells that fired 
+    *
+    *(Arg 1, p: p = 0 or nothing: no print, p = 1, print)
+    */ 
+    proc update() { local i
+	if( numarg() > 0 ) {
+	    p = $1
+	} else {
+	    p = 0
+	}
+	for i = 0, nCell-1 {
+	    if( cell[i].spike() ) {
+		results.store1( i, p )
+	    }
+	}
+    }
+    
+    /* Connects two cell populations and sets synaptic weights.
+    * 
+    * Arg 1,  Nto     : The netborder index of the downstream population
+    * Arg 2,  Nfrom   : The netborder index of the upstream population
+    * Arg 3,  wvec    : Vector with normalized weight in mS/(cm2*prenet size)
+    *                   Its size = size of locvec*exinvec and a netcon at
+    *                   locvec.x[i] and exinvec.x[j] has weight wvec.x[h*K+k]
+    *                   where K is the size of locvec.
+    * Arg 4,  locvec  : Vector with compartments contacted by the synapses
+    * Arg 5,  exinvec : Vector with synaptic contacts, 0=GABA, 1=AMPA, 2=NMDA
+    * Arg 6,  Jp      : Peak of connection curve
+    * Arg 7,  std     : Standard deviation of connection curve in radians
+    * Arg 8,  deldist : Delay distribution type. 1 = One point, 2 = Erlang
+    * Arg 9,  mu      : Mean delay
+    * Arg 10, s2      : Variance of delay
+    *
+    * return Jm: The base of the connection curve
+    */
+    func conn() { local N1, N2, Jp, std, j, K, F, Jm, d, ind, deldist, mu, s2
+
+	Nto = $1
+	Nfrom = $2
+	print "to net: ", Nto, " from net: ", Nfrom
+	wvec = $o3.div(netborder.x[Nfrom+1]-netborder.x[Nfrom])
+	locvec = $o4
+	exinvec = $o5
+	Jp = $6
+	std = $7
+	deldist = $8
+	mu = $9
+	s2 = $10
+	if( deldist == 0 ) {
+	    deldist = 1
+	    mu = 0
+	    s2 = 0
+	}
+	if( deldist == 1 ) {
+	    r.uniform(mu,mu)
+	} else if( deldist == 2 ) {
+	    r.erlang( mu, s2 )
+	}
+	
+	
+	
+	/* The connection is not flat */
+	if( Jp > 0 && Jp!= 1 && std > 0 ) {
+	    /* Determine J-.
+	    * J+ is the height of the connection curve. J- is the base, 
+	    * std is the standard deviation */
+	    Jm = ( 1 - Jp*std/sqrt(2*PI) ) / ( 1 - std/sqrt(2*PI) )
+	    
+	    print "Jp: ", Jp
+	    print "Jm: ", Jm
+	    print "std: ", std
+	    for i = netborder.x[Nfrom], netborder.x[Nfrom+1] - 1 {
+		for j = netborder.x[Nto], netborder.x[Nto+1] - 1 {
+		    d = theta.x[i]-theta.x[j]
+		    if( abs(d) > PI ) {
+			d = d - 2*PI*d/abs(d)
+		    }
+		    F = Jm + (Jp - Jm) * exp(-(d)^2/(2*std^2))
+		    
+		    /* Connecting if postcell is ECell */
+		    if( !strcmp( cell[j].ID, "ECell" ) ) {
+			H = exinvec.size()
+			for h = 0, H - 1 {
+			    for k = 0, locvec.size() - 1 {
+				ind = cell[j].connect_pre( cell[i], r.repick(), exinvec.x[h], locvec.x[k] )
+				cell[j].setWsyn( exinvec.x[h], F*wvec.x[k*H+h], locvec.x[k], ind )
+			    }
+			}
+		    /* Connecting if postcell is ICell */
+		    } else if( !strcmp( cell[j].ID, "ICell" ) ) {
+			for h = 0, exinvec.size() - 1 {
+			    ind = cell[j].connect_pre( cell[i], r.repick(), exinvec.x[h] )
+			    cell[j].setWsyn( exinvec.x[h], F*wvec.x[h], ind )
+			}
+		    }
+		}
+	    }
+	} else {
+        /* A flat connection */
+	    Jm = 1
+	    for j = netborder.x[Nto], netborder.x[Nto+1] - 1 {
+		/* Connecting if postcell is ECell */
+		if( !strcmp( cell[j].ID, "ECell" ) ) {
+		    for i = netborder.x[Nfrom], netborder.x[Nfrom+1] - 1 {
+			H = exinvec.size()
+			for h = 0, H - 1 {
+			    for k = 0, locvec.size() - 1 {
+				ind = cell[j].connect_pre( cell[i], r.repick(), exinvec.x[h], locvec.x[k] )
+				cell[j].setWsyn( exinvec.x[h], wvec.x[k*H+h], locvec.x[k], ind )
+			    }
+			}
+		    }
+	        /* Connecting if postcell is ICell */
+		} else if( !strcmp( cell[j].ID, "ICell" ) ) {
+		    for i = netborder.x[Nfrom], netborder.x[Nfrom+1] - 1 {
+			for h = 0, exinvec.size() - 1 {
+			    ind = cell[j].connect_pre( cell[i], r.repick(), exinvec.x[h] )
+			    cell[j].setWsyn( exinvec.x[h], wvec.x[h], ind )
+			}
+		    }
+		}
+	    }
+	}
+	return Jm
+    }
+    
+    /* Saves the connection profiles */
+    proc saveConn() { local i, j, k, m
+	
+	print "Saving connections"
+	file = new File()
+	
+	/* Here, connection curves are saved. They are saved so that
+	* one can print angle against weight to get a bell shaped curve */
+	file.wopen( "Connections.txt" )
+	for i = 0, netborder.size()-2 {
+	    ind = int( ( netborder.x[i]+netborder.x[i+1] ) / 2 )
+	    if( !strcmp( cell[ind].ID, "ICell" ) ) {
+		for j = 0, 2 { /* GABA = 0, AMPA = 1, NMDA = 2 */
+		    for k = 0, cell[ind].pre_list[j].count() - 1 {
+			m = cell[ind].getPreID(j,k)
+			file.printf( "%d\t%d\t%g\t%g\n", ind, m, theta.x[m], cell[ind].getWsyn( j, k ) )
+		    }
+		}
+	    } else {
+		for j = 0, 2 { /* GABA = 0, AMPA = 1, NMDA = 2 */
+		    for h = 0, (cell[ind].synCnt)/6 - 1 {
+			n = 6*h+j
+			for k = 0, cell[ind].pre_list[n].count() - 1 {
+			    m = cell[ind].getPreID(n,k)
+			    file.printf( "%d\t%d\t%g\t%g\n", ind, m, theta.x[m], cell[ind].getWsyn( j, h, k ) )
+			}
+		    }
+		}
+	    }
+	}
+	file.close()
+	
+    }       
+
+    
+    proc saveParams() {
+	
+	/* New: Here, the amount of current flowing through NMDA channels
+	* is calculated and can be stored in files rNMDA and rAMPA.
+	* This is to obtain estimates of the AMPA and NMDA weights needed to 
+	* obtain x% of total excitatory current flowing through NMDA channels
+	* while preserving total current. These values are always dependent
+	* on the experimental protocol as NMDA conductance is voltage 
+	* dependent. Calculations are based on currents flowing from
+	* external sources */
+	
+	/* Calculations are based on currents flowing through the connection
+	* X->E */
+	
+	if( EXPv.x[0] == 4 || EXPv.x[0] == 5 ) {
+	    rw = results.c1_p_c2_e_cTot( EXPv )
+	} else if( EXPv.x[0] == 3 ) {
+	    results.calcCurr()
+	}
+			    
+   	if( EXPv.x[0] == 4 && rw >= 0 ) { /* Only when tuning rNMDA */
+	    for k = 1, nrow-3 {
+		PARAM.object(k).x[9] = PARAM.object(k).x[9] * rw
+		PARAM.object(k).x[11] = PARAM.object(k).x[11] * rw
+	    }
+	}
+			    
+	/* Parameters */
+	file.wopen( "Parameters.txt" )
+	file.printf( "Nattyp: %g\n", nettype )
+	file.printf( "Antal moduler: %g\n", nmod )
+	tSyn = PARAM.object(0).x[3]
+	tStop = PARAM.object(0).x[4]
+	DT = PARAM.object(0).x[5]
+	file.printf( "tSyn: %d\n", tSyn )
+	file.printf( "tStop: %d\n", tStop )
+	file.printf( "dt: %g\n", DT )
+	file.close()
+
+	file.wopen( "Params.txt" )
+	file.printf( "%d\n", nettype )
+	file.printf( "%d\n", nmod )
+	file.printf( "%d\n", nrow )
+	file.printf( "%d\n", tSyn )
+	file.printf( "%d\n", tStop )
+	file.printf( "%g\n", DT )
+	file.close()
+	
+	file.wopen( "ParamKey.txt" )
+	file.printf( "Nattyp:\n" )
+	file.printf( "Antal moduler:\n" )
+	file.printf( "Antal rader: \n" )
+	file.printf( "tSyn:\n" )
+	file.printf( "tStop:\n" )
+	file.printf( "dt:\n" )
+	file.close()
+	
+	file.aopen( "Parameters" )
+	for k = 1, nmod {
+	    file.printf( "\n++++++++++++++++++++++\n\nModul # %d\n\n", k )
+	    Icelltype = PARAM.object(0).x[2+4*k]
+	    Ecelltype = PARAM.object(0).x[3+4*k]
+	    if( Icelltype == 2 ) {
+		str = "IAF"
+	    } else if( Icelltype == 1 ) {
+		str = "1-comp"
+	    }
+	    file.printf( "ICelltyp: %s\n", str )
+	    if( Ecelltype == 1 ) {
+		str = "3-comp"
+	    } else if( Ecelltype == 2 ) {
+		str = "IAF"
+	    } else if( Ecelltype == 0 ){
+		str = "1-comp"
+	    }
+	    file.printf( "ECelltyp: %s\n", str )
+	    file.printf( "Antal celler\n" )
+	    file.printf( "NI: %g\n", PARAM.object(0).x[4+4*k] )
+	    file.printf( "NE: %g\n", PARAM.object(0).x[5+4*k] )
+	}
+	
+	for k = 1, nrow-3 {
+	    to = PARAM.object(k).x[0]
+	    from = PARAM.object(k).x[1]
+	    file.printf( "Koppling fran modul %d till modul %d\n", from, to )
+	    file.printf( "Synaptisk overforingstid:\n" )
+	    deldist = PARAM.object(k).x[2]
+	    if( deldist == 1 ) {
+		str = "Enpunkt"
+	    } else if( deldist == 2 ) {
+		str = "Erlang"
+	    } else {
+		str = "Momentan overforing"
+	    }
+	    file.printf( "Distribution: %s\n", str )
+	    file.printf( "Medelvarde: %g\n", PARAM.object(k).x[3] )
+	    if( deldist == 2 ) {
+		file.printf( "Varians: %g\n", PARAM.object(k).x[4] )
+	    }
+	    file.printf( "I-> compartments pa E: %d\n", PARAM.object(k).x[5] )
+	    file.printf( "E-> compartments pa E: %d\n", PARAM.object(k).x[6] )
+	    file.printf( "Andel NMDA: %g\n", PARAM.object(k).x[7] )
+	    file.printf( "Kopplingsstyrkor\n" )
+	    file.printf( "Ii:  %g\n", PARAM.object(k).x[8] )
+	    file.printf( "Ie:  %g\n", PARAM.object(k).x[9] )
+	    file.printf( "Ei:  %g\n", PARAM.object(k).x[10] )
+	    file.printf( "Ee:  %g\n", PARAM.object(k).x[11] )
+	    file.printf( "Kopplingskurvor\n" )
+	    file.printf( "Jpii: %g,\tJmii: %g,\tstdii: %g\n", PARAM.object(k).x[12], jm.x[(k-1)*4], PARAM.object(k).x[13] )
+	    file.printf( "Jpie: %g,\tJmie: %g,\tstdie: %g\n", PARAM.object(k).x[14], jm.x[(k-1)*4+1], PARAM.object(k).x[15] )
+	    file.printf( "Jpei: %g,\tJmei: %g,\tstdei: %g\n", PARAM.object(k).x[16], jm.x[(k-1)*4+2], PARAM.object(k).x[17] )
+	    file.printf( "Jpee: %g,\tJmee: %g,\tstdee: %g\n", PARAM.object(k).x[18], jm.x[(k-1)*4+3], PARAM.object(k).x[19] )
+	}
+	file.close()
+	
+	file.aopen( "Params" )
+	for k = 1, nmod {
+	    file.printf( "%g\n", PARAM.object(0).x[2+4*k] )
+	    file.printf( "%g\n", PARAM.object(0).x[3+4*k] )
+	    file.printf( "%g\n", PARAM.object(0).x[4+4*k] )
+	    file.printf( "%g\n", PARAM.object(0).x[5+4*k] )
+	}
+	file.close()
+	file.aopen( "ParamKey" )
+	for k = 1, nmod {
+	    file.printf( "Icelltyp # %d\n", k )
+	    file.printf( "Ecelltyp # %d\n", k )
+	    file.printf( "NI # %d\n", k )
+	    file.printf( "NE # %d\n", k )
+	}
+	file.close()
+	
+	file.wopen( "C.txt" )
+	for k = 1, nrow-3 {
+	    file.printf( "%g\n", PARAM.object(k).x[0] )
+	    file.printf( "%g\n", PARAM.object(k).x[1] )
+	    file.printf( "%g\n", PARAM.object(k).x[2] )
+	    file.printf( "%g\n", PARAM.object(k).x[3] )
+	    file.printf( "%g\n", PARAM.object(k).x[4] )
+	    file.printf( "%g\n", PARAM.object(k).x[5] )
+	    file.printf( "%g\n", PARAM.object(k).x[6] )
+	    file.printf( "%g\n", PARAM.object(k).x[7] )
+	    file.printf( "%g\n", PARAM.object(k).x[8] )
+	    file.printf( "%g\n", PARAM.object(k).x[9] )
+	    file.printf( "%g\n", PARAM.object(k).x[10] )
+	    file.printf( "%g\n", PARAM.object(k).x[11] )
+	    file.printf( "%g\n%g\n%g\n", PARAM.object(k).x[12], jm.x[4*(k-1)], PARAM.object(k).x[13] )
+	    file.printf( "%g\n%g\n%g\n", PARAM.object(k).x[14], jm.x[4*(k-1)+1], PARAM.object(k).x[15] )
+	    file.printf( "%g\n%g\n%g\n", PARAM.object(k).x[16], jm.x[4*(k-1)+2], PARAM.object(k).x[17] )
+	    file.printf( "%g\n%g\n%g\n", PARAM.object(k).x[18], jm.x[4*(k-1)+3], PARAM.object(k).x[19] )
+	}
+	file.close()
+
+	file.wopen( "CKey.txt" )
+	for k = 1, nrow-3 {
+	    file.printf( "Till # %d: \n", k )
+	    file.printf( "Fran # %d: \n", k )
+	    file.printf( "Delaydistribution # %d: \n", k )
+	    file.printf( "Medelvarde # %d: \n", k )
+	    file.printf( "Varians # %d: \n", k )
+	    file.printf( "I-> compartments pa E # %d: \n", k )
+	    file.printf( "E-> compartments pa E # %d: \n", k )
+	    file.printf( "Andel NMDA # %d: \n", k )
+	    file.printf( "Ii # %d: \n", k )
+	    file.printf( "Ie # %d: \n", k )
+	    file.printf( "Ei # %d: \n", k )
+	    file.printf( "Ee # %d: \n", k )
+	    file.printf( "Jpii # %d: \nJmii # %d: \nstdii # %d: \n", k, k, k )
+	    file.printf( "Jpie # %d: \nJmie # %d: \nstdie # %d: \n", k, k, k )
+	    file.printf( "Jpei # %d: \nJmei # %d: \nstdei # %d: \n", k, k, k )
+	    file.printf( "Jpee # %d: \nJmee # %d: \nstdee # %d: \n", k, k, k )
+	}
+	file.close()
+    }
+    
+endtemplate Net
+    

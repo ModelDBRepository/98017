@@ -1,0 +1,1413 @@
+/* Results contains all the data about spike times and which cells fired 
+* the spikes. It also contains functions for handling the data.
+*
+* Author: Fredrik Edin, 2003.
+* Address: freedin@nada.kth.se
+*/
+
+begintemplate Results
+
+    /* Public functions */
+    public store1         // Stores action potentials during a simulation.
+                          // Fast, but vectors may not be resized.
+    public store2         // Stores and saves action potentials during a
+		          // simulation. Does not save data in array.
+    public store3         // Stores action potentials during a simulation.
+                          // Slow, but easy to use.
+    public terminate      // Tells Results that a simulation is finished
+    public save           // Saves the action potential data
+    public ff             // Computes the firing rate of every cell
+    public popff          // Computes the mean firing rate
+    public fs             // Computes the standard deviation of firing rates
+    public findActive     // Finds cells in net n with rates above X mV
+    public binAPs         // Bins the action potentials (fills APmx)
+    public cohMat         // Fills the coherence matrix
+    public popCoh         // Calculates the population coherence
+    public kRange         // Calculates a coherence function
+    public cohGroups      // Calculates to coherence of and between groups of cells
+    public setLFP         // Stores LFPs during a simulation
+    public LFP            // Creates a population LFP time trace
+    public oscfreq        // /*FIX ME, ej färdig*/
+    public popVec         // Computes the population vector
+    public setAHP         // Sets the AHP of the cells in the net 
+    public getAHP         // Gets the AHP of the cells in the net
+    public Iapps          // Stores the drive of every cell
+    public c1_p_c2_e_cTot //
+    public doEXP          // Does an experiment during the simulation
+    public setNet         // Sets a reference to the net
+    public storeCh        // Stores the charge during the simulation 
+    public storeCh2       // Stores the charge during the simulation. Faster, less good
+    public restoreCh      // To be called before every new storing of charges
+    public calcCurr       // Calculates and stores currents for EXP = 3
+    
+    /* Public objects and variables */
+    public bins      // The number of time bins
+    public binw      // The time bin width in ms
+    public APCells   // Vector with cell indices for every spike
+    public APTimes   // Vector with spike times in ms
+    public APmx      // Time binned spike matrix (cell*time) 
+    public APCount   // Vector with spike counts for every cell
+    public rate      // Vector with rates for every cell in Hz
+    public indvec    // Vector with cell indices
+    public LFPvec    // Vector with time trace of population LFP
+    public kappa     // Vector with network coherence function values
+    public dkdt      // Vector with derivative of kappa
+    public tauvec    // Time vector corresponding to kappa
+    public dtauvec   // Time vector corresponding to dkdt
+    public coMat     // Matrix of coherence measures (K(tau)) between cells 
+    public cohG      // Indices of cells having firing rates above or below X
+    public cgK       // Coherence matrices for and between groups of cells
+    public popv      // Vector with population vectors
+    public poptime   // Vector with corresponding time values
+    public drive     // Vector with the excitatory drive of the cells
+    public tmp  
+    public tmp2
+    public tmp3
+    public tmp4    
+    public Charge    // Matrix with total charge. Has 6 rows, one per
+                     // synapse, and one column per net
+    
+    /* Objects */
+    objref netborder // The border between nets in terms of cell indices
+    objref APCells   // Vector with cell indices for every spike
+    objref APTimes   // Vector with spike times in ms
+    objref APmx[1]   // Time binned spike matrix (cell*time) 
+    objref APCount   // Vector with spike counts for every cell
+    objref rate      // Vector with rates for every cell in Hz
+    objref LFPvec    // Vector with time trace of population LFP
+    objref kappa     // Vector with network coherence function values
+    objref dkdt      // Vector with derivative of kappa
+    objref tauvec    // Time vector corresponding to kappa
+    objref dtauvec   // Time vector corresponding to dkdt
+    objref coMat     // Matrix of coherence measures (K(tau)) between cells 
+    objref cgK[3]    // Coherence matrices for and between groups of cells
+    objref cohG[2]   // Indices of cells having firing rates above or below X
+    objref indvec    // Vector with cell indices
+    objref indvec2   // Vector with cell indices
+    objref spct      // Spectrum vector of individual LFP
+    objref popspct   // Spectrum vector of population LFP
+    objref popv      // Vector with population vectors
+    objref poptime   // Vector with corresponding time values
+    objref drive     // Vector with the excitatory drive of the cells
+    objref dfile     // File object
+    objref tmp       // Temporary object
+    objref tmp2      // Temporary object
+    objref tmp3      // Temporary object
+    objref tmp4      // Temporary object
+    objref net       // The net object
+    objref EXPv      // Vector with experiment parameters
+    objref Charge    // Matrix with total charge. Has 6 rows, one per
+                     // synapse, and one column per net
+    objref rC1v      // Conductance 1 to get x% charge 1
+    objref rC2v      // Conductance 2 to get x% charge 2
+    objref chStored  // Matrix containing which charges have already been stored
+    objref offset    // Vector, see popVec
+    strdef str       // Temporary string
+
+    /* Creates a new Result object 
+    *
+    * Arg 1, nCell    : The total number of cells
+    * Arg 2, netborder: Vector with the starting index of the cells of 
+    *                   every net.
+    * Arg 3, EXPv     : Vector with experiments
+    * Arg 4, tStop    : The end of the simulation in ms
+    *(Arg 5, tStart   : The end of the initial transient of the simulation and
+    *(                  the start of data accumulation, in ms)
+    */
+    proc init() {
+	nCell = $1
+	netborder = $o2
+	EXPv = $o3
+	tStop = $4
+	if( numarg() > 4 ) {
+	    tStart = $5
+	} else {
+	    tStart = 0
+	}
+	ahp = 0
+	vMax = 100 * nCell * ( tStop - tStart ) / 1000 /* 100 Hz */
+	APCells = new Vector( vMax )
+	APTimes = new Vector( vMax )
+	APCount = new Vector( nCell + 1 )
+	LFPvec = new Vector()
+	drive = new Vector()
+	dfile = new File()
+	dfile.wopen( "APs.txt" )
+	timeind = 0
+	binw = 0.2
+	netn = netborder.size()-1
+	if( EXPv.x[0] == 3 ) {
+	    Charge = new Matrix( netborder.size()-1, 18 )
+	} else {
+	    Charge = new Matrix(nCell, 18, 2) /* 18 synapses in ECell. 2 means SPARSE */
+	}
+	chStored = new Matrix( netborder.size()-1, 18 )
+	print "Results.init"
+    }
+    
+    /* Stores the time of a spike and which cell fired it.
+    * Fast alternative
+    * 
+    * Arg 1, i: The cell that fired
+    * Arg 2, p: 0 = no print, 1 = print
+    */
+    proc store1() { local i, spt
+	i = $1
+	p = $2
+	if( p ) {
+	    print "Cell ", i, "\t", "spike ", t, "\t", nspk, "spikes"
+	}
+ 	APCells.x[ nspk ] = i
+	APTimes.x[ nspk ] = t
+	APCount.x[i] += 1
+	nspk += 1
+ 	dfile.printf( "%g\t%d\n", t, i )
+   }
+    
+    /* Stores the time of a spike and which cell fired it.
+    * Slow alternative
+    * 
+    * Arg 1, i: The cell that fired
+    */
+    proc store2() { local i, spt
+	i = $1
+	dfile.printf( "%g\t%d\n", t, i )
+    }
+        
+    /* Stores the time of a spike and which cell fired it.
+    * Slow alternative
+    * 
+    * Arg 1, i: The cell that fired
+    *(Arg 2, spt: The spike time)
+    */
+    proc store3() { local i, spt
+	i = $1
+	if( nspk == vMax ) {
+	    vMax = int( vMax * 1.5 )
+	    APCells.resize( vMax )
+	    APTimes.resize( vMax )
+	    print "resized AP vectors"
+	}
+ 	APCells.x[ nspk ] = i
+	if( numarg() > 1 ) {
+	    spt = $2
+	    APTimes.x[ nspk ] = spt
+	} else {
+	    APTimes.x[ nspk ] = t
+	}
+	APCount.x[i] += 1
+	nspk += 1
+    }
+    
+    /* Stores charge flowing through synapses. Rows contain data from 
+    * different cells. Columns contain data from different synapses. Remember to 
+    * set chStored to zero every time you begin to store charges anew,
+    * i.e. at every new time step that you store charges. This is done through
+    * procedure restoreCh
+    *
+    * Arg1, deltaT: dt between time of reports in ms
+    * Arg2, to    : number of downstream net
+    * Arg3, syn   : ICell: 0-5, ECell: 0-17
+    */
+    proc storeCh() { local deltaT, from, to, syn, N, y, A, exin, loc, rA, synC, i
+	deltaT = $1
+	to = $2
+	syn = $3
+	
+	if( !chStored.x[to][syn] ) {
+	    
+	    nloc = net.cell[ netborder.x[to] ].RELAR.size()
+	    synum = net.cell[ netborder.x[to] ].synCnt
+	    
+	    nexin = synum / nloc
+	    exin = syn % nexin
+	    loc = int( syn / nexin )
+	    
+	    Ar = net.cell[ netborder.x[to] ].RELAR.x[ loc ]
+	    net.getMeanI( to, exin, loc )
+	    
+	    for i = netborder.x[to], netborder.x[to+1]-1 {
+		Charge.x[i][syn] = Charge.x[i][syn] + net.Ivec.x[i] * deltaT * A
+	    }
+	    
+	    chStored.x[to][syn] = 1
+	}
+    }
+    
+    /* Stores charge flowing through synapses. Rows contain data from 
+    * different nets. Columns contain data from different synapses. Remember to 
+    * set chStored to zero every time you begin to store charges anew,
+    * i.e. at every new time step that you store charges. This is done through
+    * procedure restoreCh. Used in EXP = 3
+    *
+    * Arg1, deltaT: dt between time of reports in ms
+    * Arg2, to    : number of downstream net
+    * Arg3, syn   : ICell: 0-5, ECell: 0-17
+    */
+    proc storeCh2() { local deltaT, from, to, syn, N, y, A, exin, loc, rA, synC, i
+	
+	deltaT = $1
+	to = $2
+	syn = $3
+	
+	nloc = net.cell[ netborder.x[to] ].RELAR.size()
+	synum = net.cell[ netborder.x[to] ].synCnt
+	
+	nexin = synum / nloc
+	exin = syn % nexin
+	loc = int( syn / nexin )
+	
+	Ar = net.cell[ netborder.x[to] ].RELAR.x[ loc ]
+	N = netborder.x[to+1]-netborder.x[to]
+	Charge.x[to][syn] = Charge.x[to][syn] + net.getMeanI( to, exin, loc ) * deltaT * A * N
+    }
+    
+    /* See storeCh for more information 
+    */
+    proc restoreCh() { local i, j
+	for i = 0, chStored.nrow-1 {
+	    for j = 0, chStored.ncol-1 {
+		chStored.x[i][j] = 0
+	    }
+	}
+    }
+    
+   
+    /* Finishes up the simulation by resizing vectors 
+    */
+    proc terminate() { local i
+	i = APCells.size()
+	dfile.close()
+	APCount.x[nCell] = nspk
+	//APCount.x[nCell] = nspk*(nspk>i)+i*(i>nspk)
+	print "finish: APs = ", APCount.x[nCell]
+	//APCells.resize( APCount.x[nCell] )
+	//APTimes.resize( APCount.x[nCell] )
+	/*dfile.wopen("vmatCN0.002a.ma")
+	vmat.fprint(dfile)
+	dfile.close()*/
+	print "Results.terminate"
+    }
+    
+    /* Save saves the spike data 
+    *
+    * Arg 1, str: The file name 
+    */
+    proc save() { local i
+	print "Results.save"
+	if( numarg() > 0 ) {
+	    str = $s1
+	    sprint( str, "%s%s", str, ".res" )
+	} else {
+	    str = "APs.txt"
+	}
+	dfile.wopen( str )
+	for i = 0, APCount.x[nCell] - 1 {
+	    dfile.printf( "%f\t%d\n", APTimes.x[i], APCells.x[i] )
+	}
+	dfile.close()
+	rtime = stopsw()
+	printf("\n%d:%d -- AP data saved in file %s\n", rtime/60, rtime%60, str )
+    }
+    
+    /* ff computes the firing frequency of each cell.  
+    * 
+    *(Arg 1, indvec: The index vector of the cells for which the firing 
+    *                frequency is to be computed. If this is empty then the
+    *                rates of all cells in the net will be computed.)
+    *(Arg 2, netn  : Index of the net for which the rates are to be computed. 
+    *                If this is used, then indvec contains indices for the 
+    *                cells in this net. -1 = all nets )
+    *(Arg 3, begin : The starting point of the interval)
+    *(Arg 4, end   : The end point of the interval)
+    */
+    proc ff() { local i, begin, end, n, m, netn, tt
+	if( numarg() > 0 ) {
+	    indvec = $o1.c
+	} else {
+	    indvec = new Vector()
+	}
+	
+	if( numarg() > 1 ) {
+	    netn = $2
+	} else {
+	    netn = -1
+	}
+	
+	if( indvec.size() == 0 ) {
+	    if( netn < 0 ) {
+		n = nCell
+	    } else {
+		n = netborder.x[ netn+1 ] - netborder.x[ netn ]
+	    }
+	    indvec = new Vector( n )
+	    indvec.indgen()
+	}
+	
+	indvec.add( netborder.x[ (netn>0)*netn ] )
+	
+	if( numarg() > 3 ) {
+	    begin = $3
+	    end = $4
+	} else {
+	    begin = tStart
+	    end = tStop
+	}
+	tmp = new Vector( nCell, 0 )
+	rate = new Vector( nCell, 0 )
+	
+	/* Alt 2 */
+	for i = 0, nCell - 1 {
+	    tmp.x[i] = APmx[i].c( begin / binw, end / binw - 1 ).sum()
+	}
+	tmp.div( ( end - begin ) / 1000 )
+	rate.copy( tmp, indvec )
+	print "Rate computed using alt 2"
+	/*for i = 0, rate.size() - 1 {
+	    print i, ") ", rate.x[i]
+	    print i, ") ", APCount.x[i]
+	}*/
+    }
+    
+    /* popff computes the population firing frequency.
+    * 
+    *(Arg 1, indvec: The index vector of the cells for which the firing 
+    *                frequency is to be computed. If this is empty then the
+    *                rates of all cells will be computed.)
+    *(Arg 2, netn  : Index of the net for which the rates are to be computed. 
+    *                If this is used, then indvec contains indices for the 
+    *                cells in this net. -1 = all nets)
+    *(Arg 3, begin : The starting point of the interval)
+    *(Arg 4, end   : The end point of the interval)
+    */
+    func popff() { local i, begin, end, netn
+	if( numarg() > 0 ) {
+	    indvec = $o1.c
+	} else {
+	    ff()
+	}
+	if( numarg() > 1 ) {
+	    netn = $2
+	} else if( numarg() == 1 ) {
+	    ff( indvec )
+	}
+	if( numarg() > 3 ) {
+	    begin = $3
+	    end = $4
+	    ff(indvec, netn, begin, end)
+	} else if( numarg() == 2 ) {
+	    ff( indvec, netn )
+	}
+	
+	tmp = new Vector()
+	tmp.index( rate, indvec )
+	return tmp.mean()
+    } 
+    
+    /* fs computes the standard deviation of the firing rates of the cells 
+    * 
+    *(Arg 1, indvec: The index vector of the cells for which the firing 
+    *                frequency is to be computed. If this is empty then the
+    *                rates of all cells will be computed.)
+    *(Arg 2, netn  : The net for which the rates are to be computed. If this
+    *                is used, then indvec contains indices for the cells in
+    *                this net. -1 = all nets)
+    *(Arg 3, begin : The starting point of the interval)
+    *(Arg 4, end   : The end point of the interval)
+    */
+    func fs() { local i, begin, end, n, netn, mu, sq, vr
+	if( numarg() > 0 ) {
+	    indvec = $o1.c
+	} else {
+	    mu = popff()
+	}
+	if( numarg() > 1 ) {
+	    netn = $2
+	} else if( numarg() == 1 ) {
+	    mu = popff( indvec )
+	}
+	if( numarg() > 3 ) {
+	    begin = $3
+	    end = $4
+	    mu = popff(indvec, netn, begin, end)
+	} else if( numarg() == 2 ) {
+	    mu = popff( indvec, netn )
+	}
+	
+	n = indvec.size()
+	tmp = new Vector()
+	tmp.index( rate, indvec )
+	vr = tmp.sub( mu ).pow( 2 ).sum() / ( n - 1 )
+	print "Results.fs"
+	return sqrt( vr )
+    }
+    
+    
+    /* Finds the cells in net netnum with a firing rate above 
+    * threshold thr, and places their indices in vector indvec.
+    *
+    * Arg 1, thr   : The treshold activity 
+    *(Arg 2, netn  : Index of the net. -1 = all nets) 
+    *(Arg 3, begin : The start time)
+    *(Arg 4, end   : The end time)
+    */
+    proc findActive() { local thr, netn
+	print "Results.findActive finished"
+	thr = $1
+	indvec = new Vector()
+	if( numarg() > 1 ) {
+	    netn = $2
+	} else {
+	    netn = -1
+	}
+	if( numarg() > 3 ) {
+	    begin = $3
+	    end = $4
+	} else {
+	    begin = tStart
+	    end = tStop
+	}
+	ff(indvec, netn, begin, end)
+	indvec = rate.c.indvwhere( ">=", thr )
+	/*print "Indvec"
+	for i = 0, indvec.size() - 1 {
+	    print indvec.x[i]
+	}*/
+    }
+    
+    /* binAPs bins the spikes 
+    *
+    *(Arg 1, binw : the width of the bin in ms) 
+    *(Arg 2, begin: The start time)
+    *(Arg 3, end  : The end time)
+    */
+    proc binAPs() { local begin, end, i, siz    
+	print "Results.binAPs"
+	objref APmx[nCell + 1]
+	if( numarg() > 0 ) {
+	    binw = $1
+	}
+	if( numarg() > 2 ) {
+	    begin = $2
+	    end =  $3
+	} else {
+	    begin = tStart
+	    end = tStop
+	}
+	//print "tStart: ", begin
+	bins = int( ( end - begin ) / binw )
+	for i = 0, nCell-1 {
+	    tmp = new Vector( bins+1 )
+	    APmx[i] = tmp
+	}
+	print "bins: ", bins
+	siz = APCells.size()
+	for i = 0, siz-1 {
+	    if( APTimes.x[i] >= begin && APTimes.x[i] < end ) {
+		APmx[ APCells.x[i] ].x[int( (APTimes.x[i] - begin )/binw)] += 1
+	    }
+	}
+	for i = 0,nCell-1 {
+	    APmx[i].resize(bins)
+	}
+	APmx[nCell] = APTimes.histogram(begin, end, binw)
+    }
+    
+    /* cohMat creates a coherence matrix of the spike data. Each position
+    * (i,j) in the matrix contains the coherence between spike train i and j,
+    * where coherence is based on the bin width: co(tau) = sum( i(k) * j(k) )
+    * / sqrt( sum( i(k) ) * sum( j(k) ) ). The coherence is calculated only
+    * after 1000 ms transients.
+    *
+    * Arg 1, tau    : The bin width
+    *(Arg 2, begin  : The start time in ms)
+    *(Arg 3, end    : The stop time in ms)
+    *(Arg 4, indvec : The index vector)
+    *(Arg 5, indvec2: The second vector)
+    */
+    proc cohMat() { local tau, siz, siz2, i, j, n, num, den
+	if( tStop < tStart + 100 ) {
+	    print "Time of simulation too short"
+	    coMat = new Matrix( siz, siz, -2 )
+	} else {
+	    print "Starting cohMat"
+	    tau = $1
+	    if( numarg() > 2 ) {
+		begin = $2
+		end = $3
+	    } else {
+		begin = tStart
+		end = tStop
+	    }
+	    binAPs( tau, tStart, tStop )
+	    if ( numarg() > 3 ) {
+		siz = $o4.size()
+		siz2 = $o4.size()
+		indvec = $o4
+		indvec2 = $o4
+		if( numarg() > 4 ) {
+		    siz2 = $o5.size()
+		    indvec2 = $o5
+		}
+	    } else {
+		siz = nCell
+		siz2 = nCell
+		indvec = new Vector(siz)
+		indvec.indgen(1)
+		indvec2 = indvec
+	    }
+	    coMat = new Matrix( siz, siz2 )
+	    if ( numarg() > 2 ) {
+		coMat.setdiag( 0, -1 )
+	    }
+	    for i = 0, siz-1 {
+		n = i - 1
+		if ( numarg() > 2 ) {
+		    n = siz2 - 1
+		}
+		for j = 0, n {
+		    num = APmx[ indvec.x[i] ].c.mul( APmx[ indvec2.x[j] ] ).sum()
+		    den = sqrt( APmx[ indvec.x[i] ].c.sum() * APmx[ indvec2.x[j] ].sum() )
+		    if( num == 0 || den == 0 ) {
+			coMat.x[i][j] = 0
+		    } else {
+			coMat.x[i][j] = num / den
+		    }
+		    if( numarg() < 3 ) {
+			coMat.x[j][i] = coMat.x[i][j]
+		    }
+		}
+	    }
+	    print "cohMat finished"
+	}
+    }
+    
+    
+    /* popCoh creates a population coherence index, which is the mean a 
+    * all the dual coherences between the cells. The index is calculated
+    * using either all cells in the net or a subset of it
+    *
+    * Arg 1, tau   : The bin width 
+    *(Arg 2, indvec: A vector with the subset of cells included.)
+    */
+    func popCoh() { local k, tau, n, i, j
+	print "Starting popCoh"
+	k = 0
+	tau = $1
+	if (tau > 0) {
+	    if( numarg() > 1 ) {
+		indvec = $o2
+		cohMat( tau, indvec )
+		n = indvec.size()
+	    } else {
+		cohMat( tau )
+		n = nCell
+	    }
+	    k = 0
+	    for i = 1, n-1 {
+		for j = 0, i - 1 {
+		    k += coMat.x[i][j]
+		}
+	    }
+	    k /= n * (n-1) / 2
+	    print "popCoh finished, kappa: ", k
+	    return k
+	} else {
+	    print "popCoh finished, kappa: ", 0
+	    return 0
+	}
+    }
+    
+    /* kRange creates a Vector kappa( tau ) between kappa(0) = 0 and 
+    * kappa(end) = 1 with increments dtau, and also creates its derivative.
+    * Finally, it computes and returns the oscillation frequency
+    *
+    * Arg 1, dtau: the change in bin width 
+    */
+    proc kRange() { local dtau, tau, siz, y, k, i
+	print "Starting kRange"
+	if( numarg() > 0 ) {
+	    dtau = $1
+	} else {
+	    dtau = 1
+	}
+	if( numarg() > 1 ) {
+	    tau = $2
+	} else {
+	    tau = 0
+	}
+	kappa = new Vector( 100 )
+	tauvec = new Vector( 100 )
+	siz = 0
+	y = 0
+	while (y < 1) {
+	    print " "
+	    print "kRange, #", siz+1
+	    y = popCoh( tau )
+	    kappa.x[siz] = y
+	    tauvec.x[siz] = tau
+	    siz += 1
+	    tau += dtau
+	    print "kappa = ", y
+	}
+	kappa.resize( siz )
+	tauvec.resize( siz )
+	dtauvec = tauvec.c( 1, siz-1 ).add( tauvec.c( 0, siz-2 ) ).div( 2 )
+	dkdt = kappa.c( 1, siz-1 ).sub( kappa.c( 0, siz-2 ) ).div( dtau )
+    }
+    
+    /* Computes the coherence within two groups of cells, one group which is
+    * synchronized, the other not. They are separated by their different 
+    * firing rates. The synchronized cells have firing rates above 34 Hz. 
+    *
+    *(Arg 1, border: The border frequency for separating the two groups of 
+    * cells. Default is 34 Hz.)
+    */
+    proc cohGroups() { local border, i
+	if( numarg() > 0 ) {
+	    border = $1
+	} else {
+	    border = 34
+	}
+	ff()
+	cohG[0] = new Vector()
+	cohG[0].indvwhere(rate, ">", border)
+	cohG[1] = new Vector()
+	cohG[1].indvwhere(rate, "<=", border)
+	for i = 0, 1 {
+	    if( cohG[i].size() > 0 ) {
+		cohMat( 1, cohG[i] )
+		cgK[i] = coMat.c
+	    } else { 
+		print "cohG[", i, "] too small"
+	    }
+	}
+	if( cohG[0].size() > 0 && cohG[1].size() > 0 ) {
+	    cohMat( 1, cohG[0], cohG[1] )
+	    cgK[2] = coMat.c
+	}
+	print "cohG[0]: length = ", cohG[0].size()
+	print "cohG[1]: length = ", cohG[1].size()
+    }
+    
+    /* Sets the LFP at time t. The data for each cell is added
+    * to the end of the vector. Used by the network object.
+    * 
+    * Arg 1, lfp: The population LFP at time t
+    */
+    proc setLFP() { local lfp
+	lfp = $1
+	if( timeind == LFPvec.size() ) {
+	    LFPvec.resize( timeind*1.5 )
+	}
+	LFPvec.x[ timeind ] = lfp
+	timeind += 1
+	//print timeind
+    }   
+    
+    /* Computes a time trace of the population synaptic activity
+    * 
+    *(Arg 1, indvec: The index vector of the cells for which the LFP 
+    *                is to be computed. If this is empty then the
+    *                rates of all cells will be computed.)
+    *(Arg 2, netn  : Index of the net for which the rates are to be computed. 
+    *                If this is used, then indvec contains indices for the 
+    *                cells in this net. -1 = all nets )
+    */
+    /*proc LFP() { local i, begin, end, n, netn
+	if( numarg() > 0 ) {
+	    indvec = $o1.c
+	} else {
+	    indvec = new Vector( nCell )
+	    indvec.indgen()
+	}
+	if( numarg() > 1 ) {
+	    netn = $2
+	    if( netn < 0 ) {
+		netn = 0
+		n = nCell
+	    } else {
+		n = netborder.x[ netn+1 ] - netborder.x[ netn ]
+	    }
+	    if( indvec.size() == 0 ) {
+		indvec = new Vector( n )
+		indvec.indgen(1)
+	    }		
+	    indvec.add( netborder.x[netn] )
+		
+	}*/
+	
+	/* Calculate population LFP for the whole period */
+	//LFPvec = new Vector( LFPmat.ncol ) /* clear vector */ 
+	/*for i = 0, indvec.size() - 1 {
+	    LFPvec.add( LFPmat.getrow( indvec.x[i] ) )
+	}
+	LFPvec.div( indvec.size() )
+	
+    }*/
+    
+    /* Calculates the oscillation frequency of the population.
+    * This is taken to be the peak of the power spectrum of the
+    * spiking activity
+    *
+    *(Arg 1, indvec: The index vector of the cells for which the firing 
+    *                frequency is to be computed. If this is empty then the
+    *                rates of all cells will be computed.)
+    *(Arg 2, netn  : The net for which the rates are to be computed. If this
+    *                is used, then indvec contains indices for the cells in
+    *                this net. -1 = all nets)
+    *(Arg 3, begin : The starting point of the interval)
+    *(Arg 4, end   : The end point of the interval)
+    */
+    func oscfreq() { local i, begin, end, n, netn, freq
+	if( numarg() > 0 ) {
+	    indvec = $o1.c
+	} else {
+	    indvec = new Vector()
+	}
+	if( numarg() > 1 ) {
+	    netn = $2
+	} else {
+	    netn = -1
+	}
+	
+	if( indvec.size() == 0 ) {
+	    if( netn < 0 ) {
+		n = nCell
+	    } else {
+		n = netborder.x[netn+1] - netborder.x[netn]
+	    }
+	    indvec = new Vector( n )
+	    indvec.indgen()
+	}
+	
+	indvec.add( netborder.x[ (netn>0)*netn ] )
+	
+	if( numarg() > 3 ) {
+	    begin = $3
+	    end = $4
+	} else {
+	    begin = tStart
+	    end = tStop
+	}
+	
+	binAPs(0.2)
+	/*spct = new Vector( indvec.size() )
+	for i = 0, n - 1 {
+	    //spct.spctrm( APmx[ indvec.x[i] ] ) // FIX ME
+	    if( i == 0 ) {
+		popspct = new Vector( spct.size() )
+	    }
+	    popspct.add( spct )
+	}
+	freq = popspct.indvwhere( "==", popspct.max() ).max()*/
+	freq = 0
+	return freq
+	
+    }
+    
+    /* Computes the population vector. Since the network is a ring, but angles
+    * are from 0 to 2 PI, an activity centered around 0 (= 2PI) would have a 
+    * population vector = PI. To correct this, one first finds a rotation of the 
+    * ring which gives a minimum variance (in the example above, the variance is
+    * smaller if we shift the activity PI degrees). Then, one calculates the population
+    * vector in the usual way. Then one rotates the ring back.
+    *
+    * The population vector of several networks is done by adding their activities
+    * and taking the population vector.
+    *
+    * Arg 1, window  : The time window in ms
+    * Arg 2, overlap : Window overlap in ms
+    * Arg 3, netn    : The net number. netn = -1: sum all rates according to angle and do histogram
+    *                                  netn = -2: same as -1 but only excitatory (odd) netn's
+    * Arg 4, begin   : The start time in ms
+    * Arg 5, end     : The stop time in ms
+    * Return: Population vector as an angle
+    */
+    func popVec() { local window, overlap, netn, begin, end, no, dtau, m, time, ind, N
+	window = $1
+	overlap = $2
+	netn = $3
+	begin = $4
+	end = $5
+	dtau = window-overlap
+	no = int((end-begin)/dtau)
+	popv = new Vector( no, 0 )
+	poptime = new Vector( no, 0 )
+	tmp3 = new List() /* Every vector in this list contains that net's part of the firing rate distribution */
+	tmp4 = new List() /* Every vector in this list contains that net's angles */
+	if( netn < 0 ) {
+	    indvec = new Vector()
+	    tmp2 = new Vector()
+	    n = (netborder.size()-1) / abs(netn)
+	    for i = 0, n - 1 {
+		tmp2.indgen( netborder.x[(i+1)*abs(netn)-1], netborder.x[(i+1)*abs(netn)]-1, 1 )
+		indvec.append( tmp2.c )
+		tmp3.append( tmp2.c )
+		tmp4.append( net.theta.c( netborder.x[(i+1)*abs(netn)-1], netborder.x[(i+1)*abs(netn)]-1 ) )
+	    }
+	    N = indvec.size()
+	    offset = new Vector( n ) /* Contains the rotations of each network */
+	} else {
+	    N = netborder.x[netn+1] - netborder.x[netn]
+	    indvec = new Vector(N)
+	    indvec.indgen(netborder.x[netn], 1)
+	    tmp4.append( net.theta.c(netborder.x[netn], netborder.x[netn+1]-1) )
+	    tmp3.append( indvec.c )
+	    offset = new Vector(1)
+	}
+	
+	/* Find the minimum variance and calculate the mean at that place */
+	for i = 0, no-1 {
+	    m = popff( indvec, -1, begin+i*dtau, begin+window+i*dtau ) 
+	    if( m==0 ) {
+		return 0
+	    } else {
+		tmp2 = new Vector() /* Contains mean activity of every network */
+		
+		/* Calculate the firing rates and make a distribution */
+		for j = 0, tmp3.count()-1 {
+		    m = rate.ind( tmp3.object(j) ).mean()
+		    tmp2.append( m )
+		    tmp = rate.ind( tmp3.object(j) ).c.div( tmp3.object(j).size() )
+		    tmp3.insrt( j, tmp.c )
+		    tmp3.remove( j+1 )
+		}
+		m = tmp2.sum()
+		tmp2.div( tmp2.sum )
+		for q = 0, tmp3.count()-1 {
+		    print tmp3.object(q).mean()
+		}
+		sm = 0
+		for j = 0, tmp3.count()-1 {
+		    tmp3.object(j).div( m )
+		    sm = sm + tmp3.object(j).sum()
+		}
+		
+		/* Calculate variance and mean for the first angle */
+		for j = 0, tmp4.count()-1 {
+		    tmp4.object(j).rotate(1) /* A technicality, mustnt start at angle 0, see below */
+		    offset.x[j] = 2*PI-tmp4.object(j).x[0]
+		}
+		X = 0
+		X2 = 0
+		for j = 0, tmp3.count()-1 {
+		    X2 = X2 + tmp3.object(j).c.mul( tmp4.object(j) ).mul( tmp4.object(j) ).sum()
+		    X = X + tmp3.object(j).c.mul( tmp4.object(j) ).sum()
+		}
+		popv.x[i] = (X+offset.c.mul(tmp2).sum())%(2*PI)
+		s2 = X2 - X^2
+		print "Mean ", X
+		
+		/* Calculate variance and mean for the rest of the angles */
+		for j = 1, N-1 {
+		    
+		    /* Choose the angle vector with the lowest initial angle and rotate that */
+		    n = 0
+		    h1 = tmp4.object(0).x[0]
+		    for k = 1, tmp4.count()-1 {
+			h2 = tmp4.object(k).x[0]
+			if( h2 > h1 ) {
+			    n = k
+			    h1 = h2
+			}
+		    }
+		    tmp4.object(n).rotate(1)
+		    offset.x[n] = 2*PI - tmp4.object(n).x[0]
+		    print "h1 ", h1, "h2 ", h2
+		    print "Offset  ", offset.x[n], " vector ", n
+		    print "offset2 ", offset.c.mul(tmp2).sum()
+		    
+		    /* Calculate variance and mean */
+		    X = 0
+		    X2 = 0
+		    for k = 0, tmp3.count()-1 {
+			X2 = X2 + tmp3.object(k).c.mul( tmp4.object(k) ).mul( tmp4.object(k) ).sum()
+			X = X + ( tmp3.object(k).c.mul( tmp4.object(k) ).sum() )
+		    }
+		    print "Mean: ", (X+offset.c.mul(tmp2).sum())%(2*PI)
+		    s22 = X2 - X^2
+		    if( s22 < s2 ) {
+			s2 = s22
+			popv.x[i] = (X+offset.c.mul(tmp2).sum())%(2*PI)
+		    }
+		}
+		poptime.x[i] = begin - window/2 + (i+0.5)*dtau
+		
+		/* Rotate the last angle back to the initial position */
+		n = 0
+		h1 = tmp4.object(0).x[0]
+		for k = 1, tmp4.count()-1 {
+		    h2 = tmp4.object(k).x[0]
+		    if( h2 < h1 ) {
+			n = k
+			h1 = h2
+		    }
+		}
+		tmp4.object(n).rotate(1)
+		for k = 0, tmp4.count()-1 {
+		    tmp4.object(k).rotate(-1)
+		}
+	    }
+	}
+    
+	/* Calculate the population vector as an angle*/
+	return popv.mean()
+	
+    } 
+    
+    /* Sets the afterhyperpolarization of the cells in the net
+    *
+    * Arg 1, ahp: The AHP in mV 
+    */
+    proc setAHP() {
+	ahp = $1
+    }
+    
+    
+    /* Gets the afterhyperpolarization of the cells in the net
+    *
+    * Return: The AHP in mV 
+    */
+    func getAHP() {
+	return ahp
+    }
+    
+    /* Creates a vector with the excitatory drive of the cells 
+    * in the net.
+    * 
+    * Arg 1, Iapps: The excitatory drive of a cell 
+    */
+    proc Iapps() {
+	//print "Drive ", $1
+	drive.append( $1 )
+    }
+    
+    
+        /* New: Here, the amount of current flowing through channel a
+    * is calculated and can be stored in files rC1 and rC2.
+    * This is to obtain estimates of the weights needed to 
+    * obtain x% of total excitatory current flowing through channel b
+    * while preserving total current. These values are always dependent
+    * on the experimental protocol as NMDA conductance is voltage 
+    * dependent. */
+    func c1_p_c2_e_cTot() {
+	
+	Nt = 1  /* No of time points in EXPv vector */
+	while( EXPv.x[Nt+1] > EXPv.x[Nt] ) {
+	    Nt = Nt + 1
+	}
+	
+	/* Prespecified r_c */
+	r_cOld = EXPv.x[2+Nt]
+	print "old r_c: ", r_cOld
+	
+	/* Algorithm: 1) We take a starting value for g1 and g2 to get c2 = x% of cTot
+	* and c1 = (100-x)% of cTot.
+	* 2) We measure the charge percentage y% actually flowing through the channels, as well as 
+	*    total charge cTot.
+	* 3) We use these values to produce better estimates of g1 and g2 for y%
+	* 4) We store a 1 in tmp at position y to say that that percentage has been estimated.
+	* 5) We do a linear interpolation between g1 and g2 at y and at the nearest percentage
+	*    where it has been measured.
+	* 6) After many different percentages have been measured, we redo the whole process by setting
+	*    all elements of tmp to 0.
+	*/
+	
+	/* 1) Obtain values for c1 & c2. Different depending on which experiment */
+	/* Case rNMDA */ 
+	/* Case X->E transition */
+        if( EXPv.x[0] == 4 || EXPv.x[0] == 5 ) {
+	    
+	    print "Calculating c1 and c2"
+	    binAPs()
+	    ff()
+	    
+	    /* c1 */
+	    c1 = 0
+	    Nn = EXPv.x[1+Nt]
+	    for j = 0, Nn-1 {
+		to = EXPv.x[3+Nt+9*j]
+		from = EXPv.x[4+Nt+9*j]
+		synum = net.cell[ netborder.x[to] ].synCnt
+		nloc = net.cell[ netborder.x[to] ].RELAR.size()
+		nexin = synum / nloc
+		syn = EXPv.x[6+Nt+9*j] * nexin + EXPv.x[5+Nt+9*j]		
+		for i = netborder.x[to], netborder.x[to+1]-1 {
+		    I = -Charge.x[i][syn] /* which syn? */
+		    if( I<0 ) {
+			print "WARNING, I is below 0"
+		    }
+		    sumk = 0
+		    sumTot = 0
+		    //print "new cell ", i, " count = ", net.cell[i].pre_list[syn].count(), " from ", from
+		    for k = 0, net.cell[i].pre_list[syn].count()-1 {
+			if( from < 0 ) {
+			    wf = net.cell[i].pre_list[syn].object(k).weight * net.vx
+			    sumTot = sumTot + wf
+			    sumk = sumk + wf
+			} else {
+			    cn = net.cell[i].getPreID( syn, k )
+			    wf = net.cell[i].pre_list[syn].object(k).weight * rate.x[cn]
+			    sumTot = sumTot + wf
+			    if( cn >= netborder.x[from] && cn < netborder.x[from+1] ) {
+				sumk = sumk + wf
+			    }
+			    //print "wf ", wf, " cn ", cn, " sumk ", sumk
+			}
+		    }
+		    if( sumk != 0 ) {
+			c1 = c1 + I * sumk / sumTot
+		    }
+		    //print "I ", I, " sumk ", sumk, " sumTot ", sumTot
+		    //print "delta_c1 ", I * sumk / sumTot, " c1 ", c1
+		}
+		
+		/* c2 */
+		c2 = 0
+		
+		to = EXPv.x[7+Nt+9*j]
+		from = EXPv.x[8+Nt+9*j]
+		synum = net.cell[ netborder.x[to] ].synCnt
+		nloc = net.cell[ netborder.x[to] ].RELAR.size()
+		nexin = synum / nloc
+		syn = EXPv.x[10+Nt+9*j] * nexin + EXPv.x[9+Nt+9*j]
+		for i = netborder.x[to], netborder.x[to+1]-1 {
+		    I = -Charge.x[i][syn] /* which syn? */
+		    if( I<0 ) {
+			print "WARNING, I is below 0"
+		    }
+		    sumk = 0
+		    sumTot = 0
+		    //print "new cell ", i, " count = ", net.cell[i].pre_list[syn].count(), " from ", from
+		    for k = 0, net.cell[i].pre_list[syn].count()-1 {
+			if( from < 0 ) {
+			    wf = net.cell[i].pre_list[syn].object(k).weight * net.vx
+			    sumTot = sumTot + wf
+			    sumk = sumk + wf
+			} else {
+			    cn = net.cell[i].getPreID( syn, k )
+			    wf = net.cell[i].pre_list[syn].object(k).weight * rate.x[cn]
+			    sumTot = sumTot + wf
+			    if( cn >= netborder.x[from] && cn < netborder.x[from+1] ) {
+				sumk = sumk + wf
+			    }
+			    //print "wf ", wf, " cn ", cn, " sumk ", sumk
+			}
+		    }
+		    if( sumk != 0 ) {
+			c2 = c2 + I * sumk / sumTot
+		    }
+		    //print "delta_c2 ", I * sumk / sumTot, " c2 ", c2
+		    //print  "I ", I, " sumk ", sumk, " sumTot ", sumTot
+		}
+	    }
+	}
+	print "c1 ", c1
+	print "c2 ", c2
+	
+	/* cTot */
+	cTot = c1 + c2
+	
+	st = 2+Nt+9*Nn
+	for j = 0, (EXPv.size()-st)/4-1 {
+	    print "Yes, I got in here"
+	    to = EXPv.x[st+4*j]
+	    from = EXPv.x[st+1+4*j]
+	    synum = net.cell[ netborder.x[to] ].synCnt
+	    nloc = net.cell[ netborder.x[to] ].RELAR.size()
+	    nexin = synum / nloc
+	    syn = EXPv.x[3+st+4*j] * nexin + EXPv.x[2+st+4*j]
+	    for i = netborder.x[to], netborder.x[to+1]-1 {
+		I = -Charge.x[i][syn] /* which syn? */
+		if( I<0 ) {
+		    print "WARNING, I is below 0"
+		}
+		sumk = 0
+		sumTot = 0
+		print "new cell ", i, " count = ", net.cell[i].pre_list[syn].count(), " from ", from
+		for k = 0, net.cell[i].pre_list[syn].count()-1 {
+		    if( from < 0 ) {
+			wf = net.cell[i].pre_list[syn].object(k).weight * net.vx
+			sumTot = sumTot + wf
+			sumk = sumk + wf
+		    } else {
+			cn = net.cell[i].getPreID( syn, k )
+			wf = net.cell[i].pre_list[syn].object(k).weight * rate.x[cn]
+			sumTot = sumTot + wf
+			if( cn >= netborder.x[from] && cn < netborder.x[from+1] ) {
+			    sumk = sumk + wf
+			}
+			//print "wf ", wf, " cn ", cn, " sumk ", sumk
+		    }
+		}
+		if( sumk != 0 ) {
+		    cTot = cTot + I * sumk / sumTot
+		}
+		print "delta_cTot ", I * sumk / sumTot, " cTot ", cTot
+		print  "I ", I, " sumk ", sumk, " sumTot ", sumTot
+	    }
+	}
+	
+	if( c2+c1 > 0 ) {
+	    r_c = c2/(c1+c2)
+	} else {
+	    r_c = 0
+	}
+	print "new r_c: ", r_c
+	print "c1: ", c1, " = ", c1/cTot, " %"
+	print "c2: ", c2, " = ", c2/cTot, " %"
+	print "total current: ", cTot
+	rw = -1 /* Just to say that it's not been set yet */
+	
+	
+	/* Load vectors */
+	tmp = new Vector()
+	dfile.ropen("doneSoFar.txt")
+	while( !dfile.eof() ) {
+	    tmp.append( dfile.scanvar() )
+	}
+	rC1v = new Vector()
+	dfile.ropen("rC1v.txt")
+	while( !dfile.eof() ) {
+	    rC1v.append( dfile.scanvar() )
+	}
+	rC2v = new Vector()
+	dfile.ropen("rC2v.txt")
+	while( !dfile.eof() ) {
+	    rC2v.append( dfile.scanvar() )
+	}
+
+	
+	
+	/* The basic case when there is no g2 component. How much charge
+	Ctot flows through the synapse then? */
+	if( r_c == 0 ) {
+	    tmp.x[101] = cTot
+	    tmp.x[0] = 1
+	    
+	/* If g2 is present, how much g2 corresponds to x% of the current
+	* Ctot and how much g1 corresponds to (100-x)% of Ctot? */
+	} else {
+	    
+	    cTotOld = tmp.x[101] /* dvs =2757.2253 om t=10000 */
+	    print "Old total current ", cTotOld
+	    rw = cTot/cTotOld
+	    print "new rw: ", rw
+	    
+	    /* Set g1, g2 values at percentage ind */
+	    ind = int(100*r_c+0.5)
+	    if( ind > 0 ) {
+		print "ind ", ind
+		rC1v.x[ind] = rC1v.x[int(100*r_cOld+0.5)] / rw
+		rC2v.x[ind] = rC2v.x[int(100*r_cOld+0.5)] / rw
+		print "rC1v.x[ind]: ", rC1v.x[ind]
+		print "rC2v.x[ind]: ", rC2v.x[ind]
+		tmp.x[ind] = 1
+		if( ind < 100 ) {
+		    i = tmp.c(ind+1,100).indwhere("==",1)
+		    ind2 = i + ind+1
+		    print "ind2 ", ind2
+		    if( i>-1 && rC2v.x[ind2]-rC2v.x[ind]>0 ) {
+			/* Linear interpolation to closest upper value */
+			tmp2 = new Vector( ind2-ind )
+			tmp2.indgen( rC2v.x[ind], (rC2v.x[ind2]-rC2v.x[ind])/(ind2-ind) )
+			rC2v.copy( tmp2, ind )
+		    }
+		    if( i>-1 && rC1v.x[ind2]-rC1v.x[ind]<0 ) {
+			tmp2 = new Vector( ind2-ind )
+			tmp2.indgen( rC1v.x[ind2], -(rC1v.x[ind2]-rC1v.x[ind])/(ind2-ind) )
+			rC1v.copy( tmp2.reverse(), ind+1 )
+		    }
+		}
+		i = tmp.c(0, ind-1 ).reverse().indwhere("==",1)
+		ind0 = ind-1 - i
+		print "ind0 ", ind0
+		if( i>-1  && rC2v.x[ind]-rC2v.x[ind0]>0 ) {
+		    /* Linear interpolation to closest lower value */
+		    tmp2 = new Vector( ind-ind0 )
+		    tmp2.indgen( rC2v.x[ind0], (rC2v.x[ind]-rC2v.x[ind0])/(ind-ind0) )
+		    rC2v.copy( tmp2, ind0 )
+		}
+		if( i>-1  && rC1v.x[ind]-rC1v.x[ind0]<0 ) {
+		    tmp2 = new Vector( ind-ind0 )
+		    tmp2.indgen( rC1v.x[ind], -(rC1v.x[ind]-rC1v.x[ind0])/(ind-ind0) )
+		    rC1v.copy( tmp2.reverse(), ind0+1 )
+		}
+		print "Finished interpolating"
+		dfile.wopen("rC1v.txt")
+		print "rC1"
+		rC1v.printf()
+		for k = 0, rC1v.size()-1 {
+		    dfile.printf( "%g\n", rC1v.x[k] )
+		}
+		dfile.close()
+		dfile.wopen("rC2v.txt")
+		print "rC2"
+		rC2v.printf()
+		for k = 0, rC2v.size()-1 {
+		    dfile.printf( "%g\n", rC2v.x[k] )
+		}
+		dfile.close()
+	    }	    
+	}
+	dfile.wopen("doneSoFar.txt")
+	for k = 0, tmp.size()-1 {
+	    dfile.printf( "%g\n", tmp.x[k] )
+	}
+	
+	/* Save data about currents */
+	dfile.aopen( "totCurr.txt" )
+	dfile.printf( "%g\t%g\t%g\n", cTot, c1/cTot, c2/cTot )
+	dfile.close()
+	
+	dfile.aopen( "Parameters.txt" )
+	dfile.printf( "Experiment-nummer:", EXPv.x[0] ) 
+	dfile.printf( "Experimentella parametrar:" )
+	for i = 2, EXPv.size() {
+	    dfile.printf( "%g\t", EXPv.x[i-1] )
+	    if( !(i%5) || i==EXPv.size() ) {
+		dfile.printf( "\n" )
+	    }
+	}
+	dfile.printf( "cTot %g\n", cTot )
+	dfile.printf( "rc1 %g\n", c1/cTot )
+	dfile.printf( "rc2 %g\n", c2/cTot )
+	dfile.close()
+	
+	dfile.aopen( "X.txt" )
+	for i = 0, EXPv.size()-1 {
+	    dfile.printf( "%g\n", EXPv.x[i] )
+	}
+	dfile.printf( "%g\n", cTot )
+	dfile.printf( "%g\n", c1/cTot )
+	dfile.printf( "%g\n", c2/cTot )
+	dfile.close()
+	dfile.aopen( "XKey.txt" )
+	for i = 1, EXPv.size()-1 {
+	    dfile.printf( "Experimentell parameter # %d\n", i )
+	}
+	dfile.printf( "cTot\n" )
+	dfile.printf( "rc1\n" )
+	dfile.printf( "rc2\n" )
+	dfile.close()
+    
+	return rw
+    }	
+    
+    proc calcCurr() {
+	cTot = 0
+	for i = 0, Charge.nrow()-1 {
+	    for j = 0, Charge.ncol()-1 {
+		cTot = cTot + Charge.x[i][j]
+	    }
+	}
+	
+	/* Save data about currents */
+	dfile.aopen( "Parameters.txt" )
+	dfile.printf( "Experiment-nummer:", EXPv.x[0] ) 
+	dfile.printf( "Experimentella parametrar:" )
+	for i = 2, EXPv.size() {
+	    dfile.printf( "%g\t", EXPv.x[i-1] )
+	    if( !(i%5) || i==EXPv.size() ) {
+		dfile.printf( "\n" )
+	    }
+	}
+	dfile.printf( "cTot %g\n", cTot )
+	dfile.close()
+	
+	dfile.aopen( "X.txt" )
+	for i = 0, EXPv.size()-1 {
+	    dfile.printf( "%g\n", EXPv.x[i] )
+	}
+	dfile.printf( "%g\n", cTot )
+	dfile.close()
+	dfile.aopen( "XKey.txt" )
+	for i = 1, EXPv.size()-1 {
+	    dfile.printf( "Experimentell parameter # %d\n", i )
+	}
+	dfile.printf( "cTot\n" )
+	dfile.close()
+    }
+    
+    /* Does an experiment during a simulation. As such, it must 
+    * be called by the Simulator object
+    * 
+    * Return: The next time to perform an experiment
+    */
+    func doEXP() { local EXP, EXPt, x, y, i, j
+	EXP = EXPv.x[0]
+	print "Performing experiment # ", EXP
+	if( EXP == 1 ) {
+	    /* calculate population vector of last 500 ms */
+	    binAPs()
+	    x = popVec( 500, 0, 1, t-500, t )
+	    print "Population vector: ", x, " radians"
+	    /* Set a cue theta rads away after 10 ms */
+	    pos = int( net.thetaToCell(x,1)+(netborder.x[2]-netborder.x[1])/2-EXPv.x[3]/2 )
+	    if( pos  >= netborder.x[2] ) {
+		pos = pos-(netborder.x[2]-netborder.x[1])
+	    } else if( pos < netborder.x[1] ) {
+		pos = pos+(netborder.x[2]-netborder.x[1])
+	    }
+	    print "position of next cue: ", pos
+	    amp = EXPv.x[4]
+	    w = EXPv.x[3]
+	    len = EXPv.x[2]
+	    ti = t+10
+	    tmp4 = new Vector(1)
+	    tmp4.x[0] = 2
+	    net.cue( ti, len, pos, w, amp, 1, tmp4 )
+	    return 0
+	} else if( EXP == 2 ) {
+	    /* calculate population vector of last 500 ms for multinets */
+	    binAPs()
+	    x = popVec( 500, 0, -2, t-500, t )
+	    print "Population vector: ", x, " radians"
+	    amp = EXPv.x[4]
+	    w = EXPv.x[3]
+	    len = EXPv.x[2]
+	    ti = t+10
+	    tmp4 = new Vector(1)
+	    tmp4.x[0] = 2
+	    /* Set a cue theta rads away after 10 ms in all nets */
+	    for i = 1, netborder.size()/2 {
+		pos = int( net.thetaToCell(x,2*i-1)+(netborder.x[2*i]-netborder.x[2*i-1])/2-EXPv.x[3]/2 )
+		if( pos  >= netborder.x[2*i] ) {
+		    pos = pos-(netborder.x[2*i]-netborder.x[2*i-1])
+		} else if( pos < netborder.x[2*i-1] ) {
+		    pos = pos+(netborder.x[2*i]-netborder.x[2*i-1])
+		}
+		print "position of next cue: ", pos
+		net.cue( ti, len, pos, w, amp, 1, tmp4 )
+	    }
+	    return 0
+	} else if( EXP == 3 || EXP == 4 || EXP == 5 ) {
+	    /* Detta experiment hittar nästa tidpunkt för av/på-stängning
+	    * av strömmätning. Observera att första tidpunkten alltid är 
+	    * avstängning */
+	    t0 = 0
+	    i = 1
+	    while( t > t0 ) {
+		if( i == EXPv.size() ) {
+		    t0 = tStop + 10
+		} else {
+		    t0 = EXPv.x[i]
+		    i = i + 1
+		}
+	    }
+	    return t0
+	} else {
+	    return 0
+	}
+    }
+    
+    /* Sets a reference to the net object
+    * 
+    * Arg 1, net: The net object 
+    */
+    proc setNet() {
+	net = $o1
+    }
+    
+endtemplate Results

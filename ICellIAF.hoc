@@ -1,0 +1,5 @@
+begintemplate ICellIAF
+
+proc init() {}
+
+endtemplate ICellIAF

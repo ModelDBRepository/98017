@@ -1,0 +1,78 @@
+/* This program allows you to conduct various single cell experiments, such
+* as calculating fI-curves, etc
+*
+* Author: Fredrik Edin, 2003.
+* Address: freedin@nada.kth.se
+*/
+
+
+load_file( "LabCell.hoc" )
+
+objref cl, locvec, exinvec, nspikevec, intervec, shiftvec, wvec
+objref samevec, noisevec
+
+cl = new LabCell(0.05, "plot", 1, 1, 1e-5) // $1=dt, $2=plot, $3=stats, $4=celltype, $5=E
+
+/* START: The following vectors specify signalling through synapses.
+* Look at functions in class LabCell for further information */
+nsyn = 3
+exinvec = new Vector( nsyn )
+nspikevec = new Vector( nsyn )
+intervec = new Vector( nsyn )
+shiftvec = new Vector( nsyn-1 )
+wvec = new Vector( nsyn )
+samevec = new Vector( nsyn )
+noisevec = new Vector( nsyn )
+
+exinvec.x[0] = 3
+exinvec.x[1] = 16
+exinvec.x[2] = 5
+
+noisevec.x[0] = -1
+noisevec.x[1] = -1
+noisevec.x[2] = -1
+
+start = 150
+del = 1000
+tStop_PSPtrains = 10000+del
+
+nspikevec.x[0] = 256 * 6 * (tStop_PSPtrains) / 1000
+nspikevec.x[1] = 1000 * (tStop_PSPtrains) / 1000
+nspikevec.x[2] = 1024 * 3 * (tStop_PSPtrains) / 1000
+
+intervec.x[0] = tStop_PSPtrains / nspikevec.x[0]
+intervec.x[1] = tStop_PSPtrains / nspikevec.x[1]
+intervec.x[2] = tStop_PSPtrains / nspikevec.x[2]
+
+shiftvec.x[0] = 0
+shiftvec.x[1] = 0
+
+samevec.x[0] = -1
+samevec.x[1] = -1
+samevec.x[2] = -1
+
+wvec.x[0] = 0.0115
+wvec.x[1] = 0.03
+wvec.x[2] = 0.001
+/* END */
+
+/* Use this to find the right PSC charges 
+* Adjusts cell potential to be correct value */
+//cl.eCell.setLeak(-60, 2)
+//cl.eCell.setGNa(0) 
+//cl.eCell.setGK(0)
+
+NI = 128
+NE = 512
+
+/* The functions below will perform single cell experiments */
+//cl.fICurve(0, 10, 21, 1000, 1000, 1, 0.0001) // $1 = Imin, $2 = Imax, $3 = #, $4 = time, $5 = nCell, $6 = exin, $7 = w
+//cl.effFICurve( 6.5, 6.5, 2, 0.08, 1.024/NE, NE, 10000, 2 ) // For ECells
+//cl.effFICurve( 0, 6.5, 2, 0.0036, 0.48/NI, NI, 1000, 0 ) // For ICells
+//cl.PSC(0, 0, 0, 0, 0.01, "plot") //$1 = nmda, $2 = ampa, $3 = gaba, $4 = plot, $5 = disp 
+//cl.PSP(0, 0.1, 1) // $1 = exin, $2 = w, $3 = ext
+//cl.PSPtrain(2, 0.00277, 1/40, 800, 1)//$1=exin,$2=w,$3=interval,$4=nSpk,$5 = ext 
+//cl.PSPtrain2(1, 0.00278, 1000, 10000)//$1=exin,$2=w,$3=rate,$4=tStop 
+cl.PSPtrains( 150, 1000, exinvec, intervec, nspikevec, shiftvec, noisevec, wvec, samevec ) // $1=start, $2 = del
+//cl.oneSpike()
+//cl.iClamp( 2, 1000, "plot" )

@@ -1,0 +1,932 @@
+/* An three-compartment excitatory cell. The cell is an implementation of
+* the pyramidal cell model in Tegnér, Compte and Wang, Biol. Cybern. 2002.
+* 
+* Differences from the model in the article are
+* 1: A one-state nmda channel with parameters fit to the two-state model
+*    in the article is used.
+*  
+*
+* All internal representations of currents and conductances are in nA and uS, 
+* as is the case in most Neuron mechanisms, but functions use the units
+* uA / cm2 and mS / cm2, just like in the original article. 
+*
+* The model has six types of synapses in every compartment, one summating
+* and one non-summating synapse of types GABA, AMPA and NMDA. The summating
+* synapses represent external stimulation to the cell (many uncorrelated
+* sources of low intensity), and the non-summating synapses represent
+* synapses between the cells of a net.
+*
+* Synapses are stored in a vector. Note that only synapses with netcons 
+* connected to them are actually made, so as to reduce simulation time. 
+*
+* Every cell has two types of IDs. One is a public string, "ICell", so that a 
+* program can tell it apart from other types of cells. A second ID is an 
+* int specified by the program to help identify an unknown cell.
+*
+* Author: Fredrik Edin, 2003.
+* Address: freedin@nada.kth.se
+*
+*/
+
+begintemplate ECell
+
+    /* public functions */
+    /* set functions */
+    public setWsyn         // sets synaptic weights
+    public setV            // sets membrane potential
+    public setIapp         // sets excitatory drive (IClamp)
+    public activate_syn    // activates synapses
+    public connect_pre     // connects the cell to a presynaptic cell
+    public disconnectCell  // disconnects the cell from all other cells
+    public addCue          // adds a cue to the cell
+    public poissonExternal // sets excitatory poisonnian spike train drive
+    public setID           // sets the secondary ID of the cell
+    
+    /* get functions */
+    public getWsyn         // gets a synaptic weight
+    public getGsyn         // gets a synaptic conductance
+    public getEsyn         // gets synaptic reversal potentials
+    public getTsyn         // gets synaptic time constant
+    public getIsyn         // gets synaptic currents
+    public getQ_I	   // gets cue currents
+    public getV            // gets membrane potential
+    public getCai          // gets internal Ca2+ concentration
+    public getICa          // gets the ICa
+    public getIK           // gets the IK
+    public getIKS          // gets the IKS
+    public getINa          // gets the INa
+    public getINap         // gets the INap
+    public getICan         // gets the ICan
+    public getmCan         // gets the mCan
+    public getGCan         // gets the GCan
+    public getPreID        // gets the secondary ID of a preCell
+    public spike           // checks whether a spike has occurred
+    
+    /* public objects and variables */
+    public soma     // Array with all the sections
+    public vvec     // Voltage trace vector
+    public pre_list // List with NetCons
+    public iappList // List with excitatory drive objects
+    public syn      // Array with synapses
+    public gap      // List with resistances between sections in the cell
+    public synCnt   // The number of synapses in the cell
+    public RELAR    // Vector with relative compartment sizes
+    public cue      // Vector with cues
+    public ID       // ID of the cell = "ECell"
+    public ID_2     // Second ID of the cell. Can be set by the user
+    
+    /* objects */
+    create soma[3]      // Array with all the sections
+    objref pre_list[18] // Array with NetCons Lists (pre_list0 - pre_list17)
+    objref vvec         // Voltage trace vector
+    objref pre_list0
+    objref pre_list1
+    objref pre_list2
+    objref pre_list3
+    objref pre_list4
+    objref pre_list5
+    objref pre_list6
+    objref pre_list7
+    objref pre_list8
+    objref pre_list9
+    objref pre_list10
+    objref pre_list11
+    objref pre_list12
+    objref pre_list13
+    objref pre_list14
+    objref pre_list15
+    objref pre_list16
+    objref pre_list17
+    strdef ID           // ID of the cell = "ECell"
+    objref RELAR        // Vector with relative compartment sizes
+    objref iapp         // Excitatory drive object
+    objref iappList     // List with excitatory drive objects
+    objref syn[18]      // Array with synapses
+    objref net_c        // Temporary NetCon object
+    objref gap          // List with resistances between sections in the cell
+    objref res          // Temporary resistance object
+    objref netstim      // Array with excitatory poissonian spike train sources
+    objref cue          // List with cues
+    objref cuepos       // Vector with cue positions
+    objref cell         // A presynaptic cell
+    strdef str          // Temporary string
+    
+ 
+    /* Creates an exctitatory cell where 
+    * soma[0] = soma
+    * soma[1] = proximal dendrite
+    * soma[2] = distal dendrite    
+    *
+    */
+    proc init() {
+	
+	synCnt = 18
+	nloc = 2
+	netstim = new List()
+	
+	cue = new List()
+	cuepos = new Vector()
+	vvec = new Vector()
+	ID = "ECell"
+	
+	/* Initial constants, etc */
+	AREA = 100
+	RELAR = new Vector(3)
+	RELAR.x[0] = 0.5
+	RELAR.x[1] = 0.3
+	RELAR.x[2] = 1 - (RELAR.x[0]+RELAR.x[1])
+	/* pre_list[0]: GABA synapses on soma
+	*  pre_list[1]: AMPA synapses on soma
+	*  pre_list[2]: NMDA synapses on soma
+	*  pre_list[3]: External GABA synapse on soma
+	*  pre_list[4]: External AMPA synapse on soma
+	*  pre_list[5]: External NMDA synapse on soma
+	*  pre_list[6]: GABA synapses on proximal dendrite
+	*  pre_list[7]: AMPA synapses on proximal dendrite
+	*  pre_list[8]: NMDA synapses on proximal dendrite
+	*  pre_list[9]: External GABA synapse on proximal dendrite
+	*  pre_list[10]: External AMPA synapse on proximal dendrite
+	*  pre_list[11]: External NMDA synapses on proximal dendrite
+	*  pre_list[12]: GABA synapses on distal dendrite
+	*  pre_list[13]: AMPA synapses on distal dendrite
+	*  pre_list[14]: NMDA synapses on distal dendrite
+	*  pre_list[15]: External GABA synapses on distal dendrite
+	*  pre_list[16]: External AMPA synapses on distal dendrite
+	*  pre_list[17]: External NMDA synapses on distal dendrite */
+	pre_list0 = new List()
+	pre_list1 = new List()
+	pre_list2 = new List()
+	pre_list3 = new List()
+	pre_list4 = new List()
+	pre_list5 = new List()
+	pre_list6 = new List()
+	pre_list7 = new List()
+	pre_list8 = new List()
+	pre_list9 = new List()
+	pre_list10 = new List()
+	pre_list11 = new List()
+	pre_list12 = new List()
+	pre_list13 = new List()
+	pre_list14 = new List()
+	pre_list15 = new List()
+	pre_list16 = new List()
+	pre_list17 = new List()
+	objref pre_list[synCnt]
+	pre_list[0] = pre_list0
+	pre_list[1] = pre_list1
+	pre_list[2] = pre_list2
+	pre_list[3] = pre_list3
+	pre_list[4] = pre_list4
+	pre_list[5] = pre_list5
+	pre_list[6] = pre_list6
+	pre_list[7] = pre_list7
+	pre_list[8] = pre_list8
+	pre_list[9] = pre_list9
+	pre_list[10] = pre_list10
+	pre_list[11] = pre_list11
+	pre_list[12] = pre_list12
+	pre_list[13] = pre_list13
+	pre_list[14] = pre_list14
+	pre_list[15] = pre_list15
+	pre_list[16] = pre_list16
+	pre_list[17] = pre_list17
+	
+	/* gap junction */
+	gap = new List()
+	g0 = 0.75 /* Conductance in mS/cm2 */
+	g1 = 0.25
+	
+	/* Electrode / Excitatory drive */
+	iappList = new List()
+	
+	/* Soma */
+	soma[0] {
+	    
+	    /* geometry */
+	    nseg = 1
+	    diam = sqrt( AREA / PI )
+	    L = diam
+	    /* Conversion uA/cm2 -> nA and mS/cm2 -> uS */
+	    f_surf = area(0.5) / 100000
+	    /* Conversion uA/cm2 -> mA/cm2 and mS/cm2 -> S/cm2 */
+	    f_conv = 1 / 1000
+	    
+	    /* Insert channels */
+	    insert hhPyr
+	    gl_hhPyr = 0
+	    insert ICa
+	    gcabar_ICa = 1.5 * f_conv
+	    insert Cai
+	    cai0_ca_ion = 0
+	    cai = 0
+	    insert ICan
+	    insert pas
+	    e_pas = -70
+	    g_pas = 0.05 * f_conv
+	    
+	    /* Synapses onto soma are created in connect_pre */
+	    
+	    /* Excitatory drive */
+	    iapp = new IClamp(0.5)
+	    iapp.del = 0
+	    //cue.append( iapp )
+	    iappList.append( iapp )
+	}
+	
+	/* Dendrite 1, proximal dendrite */
+	soma[1] {
+	    
+	    /* geometry: parameters specified for a 100um² area*/
+	    nseg = 1
+	    diam = sqrt( AREA / PI )
+	    L = diam
+	    
+	    /* Insert channels */
+	    insert INap
+	    insert IKs
+	    insert pas
+	    e_pas = -70
+	    g_pas = 0.05 * f_conv
+	    
+	    /* Synapses onto soma are created in connect_pre */
+	    
+	    /* Excitatory drive */
+	    iapp = new IClamp(0.5)
+	    iapp.del = 0
+	    //cue.append( iapp )
+	    iappList.append( iapp )
+	}	
+	
+	/* Dendrite 2 */
+	soma[2] {
+	    
+	    /* geometry: parameters specified for a 100um² area*/
+	    nseg = 1
+	    diam = sqrt( AREA / PI )
+	    L = diam
+	  
+	    /* Insert channels */
+	    insert IKa
+	    insert ICa
+	    gcabar_ICa = 0.25 * f_conv
+	    insert pas
+	    e_pas = -70
+	    g_pas = 0.05 * f_conv
+	    insert Cai
+	    Alpha_Cai = 0.002
+	    tau_Cai = 80
+	    cai0_ca_ion = 0
+	    
+	    /* Synapses onto soma are created in connect_pre */
+
+	    /* Excitatory drive */
+	    iapp = new IClamp(0.5)
+	    iapp.del = 0
+	    //cue.append( iapp )
+	    iappList.append( iapp )
+	}	 
+	
+	/* Connecting the two compartments with a resistor */
+	soma[0] {
+	    res = new gapJ( 0.5 )
+	    gap.append( res )
+	    res.g = g0 * f_surf / RELAR.x[0]
+	    setpointer res.vgap, soma[1].v( 0.5 )
+	}
+	soma[1] {
+	    res = new gapJ( 0.5 )
+	    gap.append( res )
+	    res.g = g0 * f_surf / RELAR.x[1]
+	    setpointer res.vgap, soma[0].v( 0.5 )
+	    res = new gapJ( 0.5 )
+	    gap.append( res )
+	    res.g = g1 * f_surf / RELAR.x[1]
+	    setpointer res.vgap, soma[2].v( 0.5 )
+	}
+	soma[2] {
+	    res = new gapJ( 0.5 )
+	    gap.append( res )
+	    res.g = g1 * f_surf / RELAR.x[2]
+	    setpointer res.vgap, soma[1].v( 0.5 )
+	}
+    }
+    
+    
+    
+    /* SET FUNCTIONS */
+    
+    
+    /* Sets the weights of the synapses. If a fifth argument is included,
+    * the fourth is ignored. This is faster.
+    *   
+    * Arg 1, exin: 0 = GABA synapse
+    *              1 = AMPA synapse
+    *              2 = NMDA synapse
+    *              3 = External GABA synapse
+    *              4 = External AMPA synapse
+    *              5 = External NMDA synapse
+    * Arg 2, w   : synaptic weight in mS/cm2
+    *(Arg 3, loc : -1 = all 0 = soma, 1 = proximal dendrite, 2 = distal dendrite)
+    *(Arg 4, ind : the index of the netcon whose weight is to be changed)
+    * Return     : 1 if the weight was changed, otherwise 0.
+    */
+    func setWsyn() { local i, w, k, res, n1, n2, j
+	
+	res = 0
+
+	exin = $1
+	w = $2 * f_surf
+	if( exin == 3 || exin == 4) {
+	    w = w * .955
+	} else if( exin == 5 ) {
+	    w = w * .63
+	}
+	n1 = 0
+	n2 = 2
+	if( numarg() > 2 ){
+	    if( $3 >= 0 ) {
+		loc = $3
+		n1 = loc
+		n2 = loc
+	    }
+	}
+	for j = n1, n2 {
+	    k = 6 * j + exin
+	    if( numarg() > 3 ) {
+		ind = $4
+		//print "Synapse type and weight"
+		//print pre_list[ k ].object(ind).syn(), syn[k], w
+		pre_list[ k ].object(ind).weight[0] = w
+		res = 1
+	    } else {
+		//if( pre_list[ k ].count() > 0 ) {
+		//    print pre_list[ k ].object(0).syn(), syn[k], w
+		//}
+		for i = 0, pre_list[ k ].count()-1 {
+		    pre_list[ k ].object(i).weight = w
+		}
+		res = 1
+	    }
+	}
+	return res
+    }
+        
+    /* Sets the membrane potential of the cells 
+    * 
+    * Arg 1, v: membrane potential in mV */
+    proc setV() {
+	soma[0].v(0.5) = $1
+	soma[1].v(0.5) = $1
+	soma[2].v(0.5) = $1
+	//print "ECell.setV", soma.v(0.5)
+    }
+
+    /* Sets the excitatory drive of the cell 
+    *
+    * Arg 1, amp: Current in uA/cm2 
+    * Arg 2, del: Start time of current (ms)
+    * Arg 3, dur: Duration of current (ms)
+    *(Arg 4, loc: 0 = soma, 1 = proximal dendrite, 2 = distal dendrite)
+    */
+    proc setIapp() { local i, n1, n2, loc
+	if( numarg() > 3 ){
+	    loc = $4
+	    n1 = loc
+	    n2 = loc
+	} else {
+	    n1 = 0
+	    n2 = 2
+	}
+	for i = n1, n2 {
+	    iappList.object(i).amp = $1 * ( f_surf ) /* Current, nA */
+	    iappList.object(i).del = $2
+	    iappList.object(i).dur = $3
+	}
+    }
+    
+    /* Activates or deactivates synapses.
+    *
+    * Arg 1, act : 1 if activating, 0 if inactivating
+    *(Arg 2, exin : 0 = GABA synapse
+    *               1 = AMPA synapse
+    *               2 = NMDA synapse
+    *               3 = External GABA synapse
+    *               4 = External AMPA synapse
+    *               5 = External NMDA synapse)
+    */
+    proc activate_syn() { local i, act, m1, m2, exin, k, j, n, i
+	act = $1
+	if( numarg() < 2 ) {
+	    m1 = 0
+	    m2 = 5
+	} else {
+	    exin = $2
+	    m1 = exin
+	    m2 = exin
+	}	
+	//print "ECell.activate_syn ", $1
+	for k = 0, 2 {
+	    for j = m1, m2 {
+		n = k*6+j
+		//if( pre_list[n].count()>0 ) {
+		//    print pre_list[n].object(0).syn(), syn[n]
+		//}
+		for i = 0, (pre_list[n].count() - 1) {
+		    pre_list[n].object(i).active($1)
+		}
+	    }
+	}
+    }
+     
+    /* Connect the cell to a presynaptic cell. Synaptic threshold is zero
+    * Weight is zero until set separately.
+    *
+    * Arg 1       : presynatic cell
+    * Arg 2, delay: axonal delay in ms 
+    * Arg 3, exin : 0 = GABA synapse
+    *               1 = AMPA synapse
+    *               2 = NMDA synapse
+    *               3 = External GABA synapse
+    *               4 = External AMPA synapse
+    *               5 = External NMDA synapse
+    *(Arg 4, loc: 0 for the soma
+    *             1 for the proximal dendrite
+    *             2 for the distal dendrite)
+    *(Arg 5: If there is a fifth argument, the precell is a netstim and not a
+    *        regular cell.
+    * Return: index in pre_list 
+    */
+    func connect_pre() { local delay, loc, exin
+	delay = $2
+	exin = $3
+	if( numarg() > 3 ) {
+	    loc = $4
+	    n1 = loc
+	    n2 = loc
+	} else {
+	    n1 = 0
+	    n2 = 2
+	}
+	
+	/* Creating synapses. */
+	for i = n1, n2 {
+	    ind = 6*i + exin
+	    if( pre_list[ ind ].count() == 0 ) {
+		if( exin == 0 ) {
+		    soma[i] {
+	    		syn[ind] = new gabaR(0.5) /* Internal GABA */
+			Erev_gabaR = -70
+		    }
+		} else if( exin == 1 ) {
+		    soma[i] {
+			syn[ind] = new AMPA_S(0.5) /* Internal AMPA */
+		    }
+		} else if( exin == 2 ) {
+		    soma[i] {
+			syn[ind] = new nmdaR(0.5) /* Internal NMDA */
+			}
+		} else if( exin == 3 ) {
+		    soma[i] {
+			syn[ind] = new Exp2Syn(0.5) /* For external GABA */
+			syn[ind].tau1 = 1/9
+			syn[ind].tau2 = 10
+			syn[ind].e = -70
+		    }
+		} else if( exin == 4 ) {
+		    soma[i] {
+			syn[ind] = new Exp2Syn(0.5) /* For external AMPA */
+			syn[ind].tau1 = 1/9
+			syn[ind].tau2 = 2
+			syn[ind].e = 0
+		    }
+		} else if( exin == 5 ) {
+		    soma[i] {
+			syn[ind] = new nmdaSUM(0.5) /* For external NMDA */
+			syn[ind].tau1 = 1/0.6
+			syn[ind].tau2 = 100
+			syn[ind].e = 0
+		    }
+		}
+	    }
+	}	
+	
+	//print "ECell.connect_pre: exin: ", exin, " loc: ", loc
+	if( numarg() > 4 ) {
+	    for i = n1, n2 {
+		pre_list[6*i+exin].append( new NetCon( $o1, syn[6*i+exin], 0, delay, 0 ) )
+	    }
+	} else {
+	    for i = n1, n2 {
+		$o1.soma pre_list[6*i+exin].append( new NetCon( &v(0.5), syn[6*i+exin], 0, delay, 0 ) )
+	    }
+	}
+	return pre_list[6*n2+exin].count()-1
+   }
+    
+    /* Disconnects the cell from the net */
+    proc disconnectCell() { local i
+	for i = 0, synCnt - 1 {
+	    pre_list[i].remove_all()
+	}
+    }    
+    
+    /* Add a cue( IClamp )
+    *
+    * Arg 1, amp: Stimulus amplitude in uA/cm2
+    * Arg 2, del: Stimulus onset in ms
+    * Arg 3, dur: Stimulus length in ms
+    *(Arg 4, loc: 0 = soma, 1 = proximal dendrite, 2 = distal dendrite)
+    * Return, n : The index of the cue
+    */
+    func addCue() { local amp, del, dur, loc, n1, n2
+	amp = $1
+	del = $2
+	dur = $3
+	if( numarg() > 3 ) {
+	    loc = $4
+	    n1 = loc
+	    n2 = loc 
+	} else {
+	    n1 = 0
+	    n2 = 2
+	}
+    	for i = n1, n2 {
+	    soma[i] { 
+		cue.append( new IClamp(0.5) )
+		cuepos.append( i )
+		cue.object( cue.count() - 1 ).amp = amp * ( f_surf )
+		cue.object( cue.count() - 1 ).del = del
+		cue.object( cue.count() - 1 ).dur = dur
+	    }
+	}
+	return cue.count() - 1
+    }
+	    
+    
+    /* Connect an external poisonian source of action 
+    * potentials of weight w and rate rate.
+    * 
+    * Arg 1, rate  : The rate of the spike train in Hz.
+    * Arg 2, wAMPA : The AMPA conductance of the spike train in mS/cm2
+    * Arg 3, wNMDA : The NMDA conductance of the spike train in mS/cm2
+    *(Arg 4, loc   : 0 = soma, 1 = proximal dendrite, 2 = distal dendrite)
+    *(Arg 5, rseed : The seed of the MyNetStim object)
+    */
+    proc poissonExternal() { local rate, wAMPA, wNMDA, i, j, rel, n
+	rate = $1
+	wAMPA = $2 * f_surf
+	wNMDA = $3 * f_surf
+	if( numarg() > 3 ) {
+	    loc = $4
+	    n1 = loc
+	    n2 = loc
+	} else {
+	    n1 = 0
+	    n2 = 2
+	}
+	if( numarg() > 4 ) {
+	    rseed = $5
+	}
+	
+	for i = n1, n2 {
+	    soma[i] netstim.append( new MyNetStim(0.5) )
+	    n = netstim.count()-1
+	    if( numarg() > 4 ) {
+		netstim.object(n).seed((i+1)*rseed)
+	    }
+	    netstim.object(n).noise = 1
+	    netstim.object(n).interval = 1000 / rate
+	    netstim.object(n).number = int( 100000 / netstim.object(n).interval ) + 1
+	    netstim.object(n).start = 0
+	    if( wAMPA > 0 ) { 
+		/* AMPA synapses 0.955 = max saturation degree at lo fire freq */
+		ind = 6*i+4
+		if( pre_list[ ind ].count() == 0 ) {
+		    soma[i] {
+			syn[ind] = new Exp2Syn(0.5) /* For external AMPA */
+			syn[ind].tau1 = 1/9
+			syn[ind].tau2 = 2
+			syn[ind].e = 0
+		    }
+		}
+		pre_list[ind].append(new NetCon(netstim.object(n),syn[ind],0,0,wAMPA*.955))
+	    }
+	    if( wNMDA > 0 ) {
+		/* NMDA synapses: 0.63 = max saturation degree at lo fire freq */
+		ind = 6*i+5
+		if( pre_list[ ind ].count() == 0 ) {
+		    soma[i] {
+			syn[ind] = new nmdaSUM(0.5) /* For external NMDA */
+			syn[ind].tau1 = 1/0.6
+			syn[ind].tau2 = 100
+			syn[ind].e = 0
+		    }
+		}
+		pre_list[ind].append( new NetCon( netstim.object(n), syn[ind],0,0,wNMDA*0.63))
+	    }
+	}
+    }
+	
+    /* Sets the secondary ID of the cell
+    *
+    * Arg 1, ID_2: The ID
+    */
+    proc setID() {
+	ID_2 = $1
+    }
+    
+    
+    
+    /* GET FUNCTIONS */
+    
+    
+    
+    
+    /* Returns the synaptic weight
+    *
+    * Arg 1, exin : 0 = GABA synapse
+    *               1 = AMPA synapse
+    *               2 = NMDA synapse
+    *               3 = External GABA synapse
+    *               4 = External AMPA synapse
+    *               5 = External NMDA synapse
+    * Arg 2, loc: 0 for the soma
+    *             1 for the proximal dendrite
+    *             2 for the distal dendrite
+    * Arg 3, ind : The index of the presynaptic cell
+    * Return     : the synaptic weight in mS/cm2
+    */
+    func getWsyn() { local exin, w, loc, k, c
+	exin = $1
+	loc = $2
+	ind = $3
+	k = 6*loc+exin
+	c = pre_list[ k ].count()
+	if( ind < c ) {
+	    w = pre_list[ k ].object(ind).weight / f_surf
+	    if( exin == 4 ) {
+		w = w / 0.955
+	    } else if( exin == 5 ) {
+		w = w / 0.63
+	    }
+	} else {
+	    w = 0
+	}
+	return w
+    }
+    
+    /* Gets the synaptic conductance in mS/cm2
+    *
+    *(Arg 1, exin: 0 = GABA synapse
+    *              1 = AMPA synapse
+    *              2 = NMDA synapse
+    *              3 = External GABA synapse
+    *              4 = External AMPA synapse
+    *              5 = External NMDA synapse)
+    *(Arg 2, loc: 0 for the soma
+    *             1 for the proximal dendrite
+    *             2 for the distal dendrite)
+    * Return     : the synaptic conductance in mS/cm2 
+    */
+    func getGsyn() { local exin, loc, g, n1, n2, m1, m2, ext
+	if( numarg() > 0 ) {
+	    exin = $1
+	} else {
+	    exin = -1
+	}
+	if( exin < 0 ) {
+	    n1 = 0
+	    n2 = 5
+	} else {
+	    n1 = exin
+	    n2 = exin
+	}
+	if( numarg() > 1 ) {
+	    loc = $2
+	} else {
+	    loc = -1 
+	}
+	if( loc > -1 ) {
+	    m1 = loc
+	    m2 = loc
+	} else {
+	    m1 = 0
+	    m2 = 2
+	}
+	g = 0
+	for i = n1, n2 {
+	    for j = m1, m2 {
+		g += syn[6*j+i].g/f_surf*RELAR.x[j]
+	    }
+	}
+	g = g / RELAR.sum()
+	return g
+    }
+    
+    /* Gets the synaptic current
+    *
+    *(Arg 1, exin: 0 = GABA synapse
+    *              1 = AMPA synapse
+    *              2 = NMDA synapse
+    *              3 = External GABA synapse
+    *              4 = External AMPA synapse
+    *              5 = External NMDA synapse)
+    *(Arg 2, loc : 0 for the soma
+    *              1 for the proximal dendrite
+    *              2 for the distal dendrite)
+    * Return     : the synaptic current in uA/cm2 
+    */
+    func getIsyn() { local loc, exin, sum, i
+	if( numarg() > 0 ) {
+	    exin = $1
+	} else {
+	    exin = -1
+	}
+	if( numarg() > 1 ) {
+	    loc = $2
+	} else {
+	    loc = -1
+	}
+	if( exin == -1 ) {
+	    n1 = 0
+	    n2 = 5
+	} else {
+	    n1 = exin
+	    n2 = exin
+	}
+	if( loc == -1 ) {
+	    m1 = 0
+	    m2 = 2
+	} else {
+	    m1 = loc
+	    m2 = loc
+	}
+	sum = 0
+	for i = m1, m2 {
+	    for j = n1, n2 {
+		ind = 6*i+j
+		if( pre_list[ind].count() > 0 ) { 
+		    sum += syn[ ind ].i / f_surf*RELAR.x[i]
+		}
+	    }
+	}
+	sum = sum / RELAR.sum()
+	return sum
+    }
+    
+    /* Gets the mean cue current at the present moment measured
+    * as total current / total cell area (not total compartment area).
+    *
+    *(Arg 1, loc : 0 for the soma
+    *              1 for the proximal dendrite
+    *              2 for the distal dendrite)
+    * Return     : the mean cue current in uA/cm2 
+    */
+    func getQ_I() { local loc, del, dur, amp, sum, i
+	if( numarg() > 0 ) {
+	    loc = $1
+	} else {
+	    loc = -1
+	}
+	if( loc == -1 ) {
+	    m1 = 0
+	    m2 = nloc-1
+	} else {
+	    m1 = loc
+	    m2 = loc
+	}
+	sum = 0
+	for i = 0, cue.count()-1 {
+	    if( cuepos.x[i] >= m1 && cuepos.x[i] <= m2 ) {
+		if( t >= cue.object(i).del && t < cue.object(i).del+cue.object(i).dur ) {
+		    // The - sign because electrode currents have 
+		    // opposite sign to synaptic currents
+		    sum -= RELAR.x[cuepos.x[i]] * cue.object(i).amp / f_surf
+		}
+	    }
+	}
+	sum = sum / RELAR.sum()
+	return sum
+    }
+
+
+    /* Get the cell potential 
+    * 
+    * Arg 1, loc : 0 for the soma
+    *              1 for the proximal dendrite
+    *              2 for the distal dendrite
+    * Return    : the potential in mV
+    */
+    func getV() { local loc
+	if( numarg() > 0 ) {
+	    loc = $1
+	} else {
+	    loc = 0
+	}
+	return soma[loc].v( 0.5 )
+    }
+    
+    /* Get the cell Ca2+ concentration 
+    * 
+    * Arg 1, loc : 0 for the soma
+    *              2 for the distal dendrite
+    *                proximal dendrite does not contain Ca2+
+    * Return    : the Ca2+ concentration in uM
+    */
+    func getCai() { local loc, cc
+	if( numarg() > 0 ) {
+	    loc = $1
+	} else {
+	    loc = 0
+	}
+	soma[loc] cc = cai
+	return cc / f_surf
+    }
+    
+    /* Get the ICa
+    * Return    : ICa in uA/cm2 
+    */
+    func getICa() { local ic
+	soma[$1] ic = ica_ICa / f_surf
+	return ic
+    }
+    
+    /* Get the IK
+    * Return    : IK in uA/cm2 
+    */
+    func getIK() { local ic
+	soma[0] ic = ik_hhPyr / f_surf
+	return ic
+    }
+    
+    /* Get the IKS
+    * Return    : IKS in uA/cm2 
+    */
+    func getIKS() { local ic
+	soma[1] ic = ik_IKs / f_surf
+	return ic
+    }
+    
+    /* Get the INa
+    * Return    : INa in uA/cm2 
+    */
+    func getINa() { local ic
+	soma[0] ic = ina_hhPyr / f_surf
+	return ic
+    }
+    
+    /* Get the INap
+    * Return    : INap in uA/cm2 
+    */
+    func getINap() { local ic
+	soma[1] ic = ina_INap / f_surf
+	return ic
+    }
+    
+    /* Get the ICan 
+    * Return    : ICan in uA/cm2 
+    */
+    func getICan() { local ic
+	soma[0] ic = i_ICan / f_surf
+	return ic
+    }
+    
+    /* Get the GCan 
+    * Return    : GCan in uA/cm2 
+    */
+    func getGCan() { local ic
+	soma[0] ic = g_ICan / f_surf
+	return ic
+    }
+    
+    /* Get the mCan 
+    * Return    : mCan 
+    */
+    func getmCan() { local ic
+	soma[0] ic = minf_ICan
+	return ic
+    }
+    
+    /* Gets the presynaptic cell secondary identity
+    *
+    * Arg 1, preL : Index of the pre_list: 0 = GABA, 1 = AMPA, 2 = NMDA
+    * Arg 2, ind  : The index in the pre_list
+    */
+    func getPreID() { local preL, ind
+	preL = $1
+	ind = $2
+	return pre_list[preL].object(ind).precell.ID_2
+    }
+    
+    /* Check whether a spike has occurred
+    *
+    * Return: 1 if a spike has occurred, 0 if not */
+    func spike() {
+	if( oldv < 0 && ( oldv = soma[0].v(0.5) ) >= 0 ) {
+	    return 1
+	}
+	return 0
+    }
+    
+endtemplate ECell
+   

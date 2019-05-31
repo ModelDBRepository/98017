@@ -1,0 +1,3 @@
+load_file("nrngui.hoc")
+print "These files are not configured for auto-launch yet"
+quit()

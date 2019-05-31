@@ -1,0 +1,572 @@
+/* Simulator runs the actual simulations. It stores data points 
+* every repdt ms.
+*
+* Author: Fredrik Edin, 2003.
+* Address: freedin@nada.kth.se
+*/
+
+begintemplate Simulator
+
+    public setObjs   // Sets the results object
+    public run, cvode
+    objref network, results, view, g, netc, cvode, EXPv, currentFiles, currentParams, LFPfiles
+    strdef pl, pr, str
+    
+    /* Creates a new Simulator object */
+    proc init() { local i, sampFreq, active
+	network = $o1
+	results = $o2
+	view = $o3
+	var_dt = $4
+	tStop = $5
+	tSyn = $6
+	
+	/* Variable time step solver. Should only be used when
+	* there are few synapses */
+	cvode = new CVode()
+	if( numarg() > 6 ) {
+	    if( var_dt <= 0 ) {
+		atol = $7
+		local_dt = $8
+	    } else {
+		local_dt = 0
+	    }
+	}
+	print "dt: ", var_dt
+	if( numarg() > 8 ) {
+	    saveV = $9
+	} else {
+	    saveV = 0
+	}
+	if( numarg() > 9 ) {
+	    EXPv = $o10
+	    EXPt = EXPv.x[1]
+	} else {
+	    EXPt = -1
+	    EXPv = new Vector(1, -1)
+	}
+	if( EXPv.size()>1 && (EXPv.x[0] == 4 || EXPv.x[0] == 5) ) {
+	    Nt = 1  /* No of time points in EXPv vector */
+	    while( EXPv.x[Nt+1] > EXPv.x[Nt] ) {
+		Nt = Nt + 1
+	    }
+	}
+	t = 0
+
+	LFPfiles = new List()
+	LFPfiles.append(new File())
+	LFPfiles.append(new File())
+	LFPfiles.object(0).wopen("LFP_soma_dist.txt")
+	LFPfiles.object(1).wopen("LFP_prox_dist.txt")
+	LFPfiles.object(0).close()
+	LFPfiles.object(1).close()
+	currentFiles = new List()
+	currentParams = new List()
+	for i = 0,15 {
+	    currentFiles.append(new File())
+	    currentParams.append(new Vector())
+	}
+	currentFiles.object(0).wopen("CURRENT0-params.txt")
+	currentFiles.object(1).wopen("CURRENT1-params.txt")
+	currentFiles.object(2).wopen("CURRENT2-params.txt")
+	currentFiles.object(3).wopen("CURRENT3-params.txt")
+	currentFiles.object(4).wopen("CURRENT4-params.txt")
+	currentFiles.object(5).wopen("CURRENT5-params.txt")
+	currentFiles.object(6).wopen("CURRENT6-params.txt")
+	currentFiles.object(7).wopen("CURRENT7-params.txt")
+	currentFiles.object(8).wopen("CURRENT8-params.txt")
+	currentFiles.object(9).wopen("CURRENT9-params.txt")
+	currentFiles.object(10).wopen("CURRENT10-params.txt")
+	currentFiles.object(11).wopen("CURRENT11-params.txt")
+	currentFiles.object(12).wopen("CURRENT12-params.txt")
+	currentFiles.object(13).wopen("CURRENT13-params.txt")
+	currentFiles.object(14).wopen("CURRENT14-params.txt")
+	currentFiles.object(15).wopen("CURRENT15-params.txt")
+
+	/* To E cells, PFC */
+	currentParams.object(0).append(3)
+	currentParams.object(0).append(1)
+	currentParams.object(0).append(1) // to population #
+	currentParams.object(0).append(1) // AMPA = 1
+	currentParams.object(0).append(2) // Compartment
+	currentParams.object(1).append(3)
+	currentParams.object(1).append(1)
+	currentParams.object(1).append(1) // to population #
+	currentParams.object(1).append(1) // exin
+	currentParams.object(1).append(1) // Compartment
+	currentParams.object(2).append(3)
+	currentParams.object(2).append(1)
+	currentParams.object(2).append(1) // to population #
+	currentParams.object(2).append(2) // exin
+	currentParams.object(2).append(2) // Compartment
+	currentParams.object(3).append(3)
+	currentParams.object(3).append(1)
+	currentParams.object(3).append(1) // to population #
+	currentParams.object(3).append(2) // exin
+	currentParams.object(3).append(1) // Compartment
+	currentParams.object(4).append(3)
+	currentParams.object(4).append(1)
+	currentParams.object(4).append(1) // to population #
+	currentParams.object(4).append(0) // AMPA = 1
+	currentParams.object(4).append(0) // Compartment
+
+	/* To I cells, PFC */
+	currentParams.object(5).append(3)
+	currentParams.object(5).append(1)
+	currentParams.object(5).append(0) // to population #
+	currentParams.object(5).append(1) // exin
+	currentParams.object(5).append(0) // Compartment
+	currentParams.object(6).append(3)
+	currentParams.object(6).append(1)
+	currentParams.object(6).append(0) // to population #
+	currentParams.object(6).append(2) // AMPA = 5 i nya, = 4 i gamla
+	currentParams.object(6).append(0) // Compartment
+	currentParams.object(7).append(3)
+	currentParams.object(7).append(1)
+	currentParams.object(7).append(0) // to population #
+	currentParams.object(7).append(0) // exin
+	currentParams.object(7).append(0) // Compartment
+
+	/* To E cells, PPC */
+	currentParams.object(8).append(3)
+	currentParams.object(8).append(1)
+	currentParams.object(8).append(3) // to population #
+	currentParams.object(8).append(1) // AMPA = 1
+	currentParams.object(8).append(2) // Compartment
+	currentParams.object(9).append(3)
+	currentParams.object(9).append(1)
+	currentParams.object(9).append(3) // to population #
+	currentParams.object(9).append(1) // exin
+	currentParams.object(9).append(1) // Compartment
+	currentParams.object(10).append(3)
+	currentParams.object(10).append(1)
+	currentParams.object(10).append(3) // to population #
+	currentParams.object(10).append(2) // exin
+	currentParams.object(10).append(2) // Compartment
+	currentParams.object(11).append(3)
+	currentParams.object(11).append(1)
+	currentParams.object(11).append(3) // to population #
+	currentParams.object(11).append(2) // exin
+	currentParams.object(11).append(1) // Compartment
+	currentParams.object(12).append(3)
+	currentParams.object(12).append(1)
+	currentParams.object(12).append(3) // to population #
+	currentParams.object(12).append(0) // AMPA = 1
+	currentParams.object(12).append(0) // Compartment
+
+	/* To I cells, PPC */
+	currentParams.object(13).append(3)
+	currentParams.object(13).append(1)
+	currentParams.object(13).append(2) // to population #
+	currentParams.object(13).append(1) // exin
+	currentParams.object(13).append(0) // Compartment
+	currentParams.object(14).append(3)
+	currentParams.object(14).append(1)
+	currentParams.object(14).append(2) // to population #
+	currentParams.object(14).append(2) // AMPA = 5 i nya, = 4 i gamla
+	currentParams.object(14).append(0) // Compartment
+	currentParams.object(15).append(3)
+	currentParams.object(15).append(1)
+	currentParams.object(15).append(2) // to population #
+	currentParams.object(15).append(0) // AMPA = 1
+	currentParams.object(15).append(0) // Compartment
+
+
+	for i = 0,15 {
+	    for j = 0,4 {
+		currentFiles.object(i).printf( "%d\t", currentParams.object(i).x[j] )
+	    }
+	    currentFiles.object(i).printf( "\n" )
+	    currentFiles.object(i).close()
+	}
+
+	currentFiles.object(0).wopen("CURRENT0.txt")
+	currentFiles.object(0).close()
+	currentFiles.object(1).wopen("CURRENT1.txt")
+	currentFiles.object(1).close()
+	currentFiles.object(2).wopen("CURRENT2.txt")
+	currentFiles.object(2).close()
+	currentFiles.object(3).wopen("CURRENT3.txt")
+	currentFiles.object(3).close()
+	currentFiles.object(4).wopen("CURRENT4.txt")
+	currentFiles.object(4).close()
+	currentFiles.object(5).wopen("CURRENT5.txt")
+	currentFiles.object(5).close()
+	currentFiles.object(6).wopen("CURRENT6.txt")
+	currentFiles.object(6).close()
+	currentFiles.object(7).wopen("CURRENT7.txt")
+	currentFiles.object(7).close()
+	currentFiles.object(8).wopen("CURRENT8.txt")
+	currentFiles.object(8).close()
+	currentFiles.object(9).wopen("CURRENT9.txt")
+	currentFiles.object(9).close()
+	currentFiles.object(10).wopen("CURRENT10.txt")
+	currentFiles.object(10).close()
+	currentFiles.object(11).wopen("CURRENT11.txt")
+	currentFiles.object(11).close()
+	currentFiles.object(12).wopen("CURRENT12.txt")
+	currentFiles.object(12).close()
+	currentFiles.object(13).wopen("CURRENT13.txt")
+	currentFiles.object(13).close()
+	currentFiles.object(14).wopen("CURRENT14.txt")
+	currentFiles.object(14).close()
+	currentFiles.object(15).wopen("CURRENT15.txt")
+	currentFiles.object(15).close()
+
+	print "simulator.init"
+    }
+    
+    /* Sets new results and view objects
+    *
+    * Arg 1, results: A results object
+    * Arg 2, view   : A view object
+    */
+    proc setObjs() {
+	results = $o1
+	view = $o2
+	tStop = $3
+    }
+    
+    /* runs the whole simulation. Note, I work only with int(t) since t is never
+    * exactly an integer even when it should be.
+    *
+    *(Arg 1, pl:  "plot" if voltage and conductance traces should be plotted)
+    *(Arg 2, pr:  "print" if doing readouts to terminal)
+    *(Arg 3, calcCh: Store nmda and ampa charge)
+    */   
+    proc run() { local i, rtime, ahp, plott, screen, storeCh
+	if( numarg() > 0 ) {
+	    pl = $s1
+	} else {
+	    pl = "no plot"
+	}
+	if( strcmp( pl, "plot" ) == 0 ) {
+	    plott = 1
+	} else {
+	    plott = 0
+	}
+	if( numarg() > 1 ) {
+	    pr = $s2
+	} else {
+	    pr = "print" 
+	}
+	if( strcmp( pr, "print" ) == 0 ) {
+	    screen = 1
+	} else {
+	    screen = 0
+	}
+	calcCh = 1
+	
+	/* Set timestep */
+	cvode.active(var_dt<=0)
+	if (var_dt>0) {
+	    dt = var_dt
+	} else {
+	    if( local_dt ) {
+		cvode.atol( atol )
+		cvode.use_local_dt( local_dt )
+	    } 
+	}
+	
+	startsw() /* Starts stopwatch */
+	
+	/* Initialize recordings of cell variables */
+	if( saveV ) {
+	    for i = 0, network.nCell - 1 {
+		network.cell[i].vvec.resize(tStop / dt + 1)
+	    }
+	}
+	
+	rtime = stopsw()    
+	printf( "%d:%d -- Starting simulation\n", rtime/60, rtime%60 )
+	
+	/* Calculates how often spike times are reported */
+	t = 0
+	if( var_dt > 0 ) {
+	    repdt = 0.1 // 0.1 ms between each network report
+	    repstep = int( repdt / dt )
+	    repdt = repstep * dt
+	    intdt = int(1/(repdt))
+	    epsilon = dt / 2
+	    print "dt: ", dt, "ratio: ", repstep
+	} else {
+	    intdt = 1
+	    epsilon = 0.000001
+	}
+	finitialize()
+	fcurrent()
+	
+	
+	/* Run initial transient */
+	
+	/* Runs with only internal synapses active to let activity settle */
+	print "Simulating an initial transient first"
+	finish = tStop - epsilon
+	network.activate_syn()
+	/* Fixed time steps */
+	if( !cvode.active() ) {
+	    while( t<tSyn-epsilon ) {
+		for i = 1, intdt {
+		    for j = 1, repstep {
+			fadvance()
+		    }
+		    if( plott ) {
+			view.update()
+		    }
+		}
+		if( screen || !(int(t)%100) ) {
+		    print "time: ", int( t )
+		}
+	    }
+	} else {
+        /* Variable time steps */
+	    while( int( t )<tSyn-epsilon ) {
+		for j = 1, 100 {
+		    if( int( t ) < finish ) {
+			for i = 1, 10 {
+			    fadvance()
+			}
+		    } else {
+			break
+		    }
+		    print "time ", t
+		    if( plott ) {
+			view.update()
+		    }
+		}
+	    }
+	    cvode.statistics()
+	}
+	
+	
+	/* Run rest of simulation */
+	
+	/* Activate synapses */
+	if( int( t ) < finish ) {
+	    print "Running with synapses"
+	    print "time: ", int( t )
+	    network.activate_syn()
+	}
+	print "Starting"
+	
+	DT = 1 /* Time in ms between calculations of currents */ 
+	
+	/* Fixed time steps */
+	if( !cvode.active() ) {
+	    while( int( t ) < finish ) {
+		for i = 1, repstep {
+		    for j = 1, intdt {
+			fadvance()
+		    }
+		    network.update( screen )
+		    if( plott ) {
+			view.update()
+		    }
+		}
+		// Lagg strommar till fil
+		if( (int(t)%DT)==0 ) {
+		    for i = 0,15 {
+			to = currentParams.object(i).x[2]
+			exin = currentParams.object(i).x[3]
+			loc = currentParams.object(i).x[4]
+			current = network.getMeanI2( to, exin, loc )
+			sprint( str, "CURRENT%d.txt", i )
+			fid = currentFiles.object(i).aopen( str )
+			currentFiles.object(i).printf( "%g\t%g\n", t, current )
+			currentFiles.object(i).close()
+		    }
+		    LFPfiles.object(0).aopen("LFP_soma_dist.txt")
+		    LFPfiles.object(1).aopen("LFP_prox_dist.txt")
+		    LFP1a = network.getLFP(1,0)
+		    LFP1b = network.getLFP(2,0)
+		    LFP2a = network.getLFP(1,1)
+		    LFP2b = network.getLFP(2,1)
+		    LFPfiles.object(0).printf( "%g\t%g\t%g\n", t, LFP1a, LFP1b )
+		    LFPfiles.object(1).printf( "%g\t%g\t%g\n", t, LFP2a, LFP2b )
+		    LFPfiles.object(0).close()
+		    LFPfiles.object(1).close()
+/*		    % ICan
+		    enet = 1
+		    ioncurr = network.getICan( enet ) * write this
+		    fid = ioncurrFiles.object(i).aopen( str )
+		    ioncurrFiles.object(i).printf( "%g\t%g\n", t, ioncurr )
+		    ioncurrFiles.object(i).close()
+		    % INa
+		    ioncurr = network.getINa( enet ) * write this
+		    fid = ioncurrFiles.object(i).aopen( str )
+		    ioncurrFiles.object(i).printf( "%g\t%g\n", t, ioncurr )
+		    ioncurrFiles.object(i).close()
+		    % IK
+		    ioncurr = network.getIK( enet ) * write this
+		    fid = ioncurrFiles.object(i).aopen( str )
+		    ioncurrFiles.object(i).printf( "%g\t%g\n", t, ioncurr )
+		    ioncurrFiles.object(i).close()
+		    % ICa-soma
+		    ioncurr = network.getICa( enet, 0 ) * write this
+		    fid = ioncurrFiles.object(i).aopen( str )
+		    ioncurrFiles.object(i).printf( "%g\t%g\n", t, ioncurr )
+		    ioncurrFiles.object(i).close()
+		    % INap
+		    ioncurr = network.getINap( enet ) * write this
+		    fid = ioncurrFiles.object(i).aopen( str )
+		    ioncurrFiles.object(i).printf( "%g\t%g\n", t, ioncurr )
+		    ioncurrFiles.object(i).close()
+		    % IKS
+		    ioncurr = network.getIKS( enet ) * write this
+		    fid = ioncurrFiles.object(i).aopen( str )
+		    ioncurrFiles.object(i).printf( "%g\t%g\n", t, ioncurr )
+		    ioncurrFiles.object(i).close()
+		    % IA
+		    ioncurr = network.getIA( enet ) * write this
+		    fid = ioncurrFiles.object(i).aopen( str )
+		    ioncurrFiles.object(i).printf( "%g\t%g\n", t, ioncurr )
+		    ioncurrFiles.object(i).close()
+		    % ICa-d2
+		    ioncurr = network.getICa( enet, 2 ) * write this
+		    fid = ioncurrFiles.object(i).aopen( str )
+		    ioncurrFiles.object(i).printf( "%g\t%g\n", t, ioncurr )
+		    ioncurrFiles.object(i).close()
+		    % Cai-soma
+		    ioncurr = network.getCai( enet, 0 ) * write this
+		    fid = ioncurrFiles.object(i).aopen( str )
+		    ioncurrFiles.object(i).printf( "%g\t%g\n", t, ioncurr )
+		    ioncurrFiles.object(i).close()
+		    % Cai-d2
+		    ioncurr = network.getCai( enet, 2 ) * write this
+		    fid = ioncurrFiles.object(i).aopen( str )
+		    ioncurrFiles.object(i).printf( "%g\t%g\n", t, ioncurr )
+		    ioncurrFiles.object(i).close()
+*/		}
+		//print network.cell[32].syn[10].i, network.cell[32].syn[16].i, network.cell[32].soma[1].v(0.5),network.cell[32].soma[2].v(0.5)
+		if( (int(t)== EXPt) ) {
+		    EXPt = results.doEXP(EXPv)
+		    if( EXPv.x[0] == 3 || EXPv.x[0] == 4 || EXPv.x[0] == 5 ) { /* Calculate charge? */
+			calcCh = 1-calcCh /* Switch on/off */
+			print "Calculating Charges: ", calcCh, " time: ", int( t )
+		    }
+		}
+		if( calcCh && int( t )%DT == 0 ) { /* Store external charge into cell every ms */
+		    if( EXPv.x[0] == 3 ) {
+			for i = 0, network.netborder.size()-2 {
+			    if( i%2 ) {
+				for j = 0, 17 {
+				    results.storeCh2(repstep*intdt*dt*DT, i, j )
+				}
+			    } else {
+				for j = 0, 5 {
+				    results.storeCh2(repstep*intdt*dt*DT, i, j )
+				}
+			    }
+			}
+		    } else if( EXPv.x[0] == 4 || EXPv.x[0] == 5 ) {
+			results.restoreCh()
+			Nn = EXPv.x[Nt+1]
+			for i = 0, Nn-1 {
+			    to = EXPv.x[Nt+3+9*i]
+			    nloc = network.cell[ network.netborder.x[to] ].RELAR.size()
+			    synum = network.cell[ network.netborder.x[to] ].synCnt	
+			    nexin = synum / nloc
+			    results.storeCh(repstep*intdt*dt*DT, to, EXPv.x[6+Nt+9*i]*nexin+EXPv.x[5+Nt+9*i] )
+			    
+			    to = EXPv.x[Nt+7+4*i]
+			    nloc = network.cell[ network.netborder.x[to] ].RELAR.size()
+			    synum = network.cell[ network.netborder.x[to] ].synCnt	
+			    nexin = synum / nloc
+			    results.storeCh(repstep*intdt*dt*DT, to, EXPv.x[10+Nt+9*i]*nexin+EXPv.x[9+Nt+9*i] )
+			}
+			st = Nt+2+9*Nn
+			for i = 0, (EXPv.size()-st)/4-1 {
+			    to = EXPv.x[st+4*i]
+			    nloc = network.cell[ network.netborder.x[to] ].RELAR.size()
+			    synum = network.cell[ network.netborder.x[to] ].synCnt	
+				    nexin = synum / nloc
+			    results.storeCh(repstep*intdt*dt*DT, to, EXPv.x[2+st+4*i]*nexin+EXPv.x[1+st+4*i] )
+			}
+		    }
+		}
+		if( screen || !(int(t)%1000) ) {
+		    print "time: ", int( t )
+		}
+	    }
+	    
+	/* Variable time steps */
+	} else { 
+	    print "Starting simulation"
+	    while( int( t ) < finish ) {
+		for j = 1, 100 {
+		    if( int( t ) < finish ) {
+			for i = 1, 10 {
+			    fadvance()
+			}
+			network.update( screen )
+		    } else {
+			break
+		    }
+		    if( calcCh ) { /* Store external charge into cell every ms */
+			if( EXPv.x[0] == 3 ) {
+			    for i = 0, network.netborder.size()-2 {
+				if( i%2 ) {
+				    for j = 0, 17 {
+					results.storeCh2(repstep*intdt*dt*DT, i, j )
+				    }
+				} else {
+				    for j = 0, 5 {
+					results.storeCh2(repstep*intdt*dt*DT, i, j )
+				    }
+				}
+			    }
+			} else if( EXPv.x[0] == 4 || EXPv.x[0] == 5 ) {
+			    results.restoreCh()
+			    Nn = EXPv.x[Nt+1]
+			    for i = 0, Nn-1 {
+				to = EXPv.x[Nt+3+9*i]
+				nloc = network.cell[ network.netborder.x[to] ].RELAR.size()
+				synum = network.cell[ network.netborder.x[to] ].synCnt	
+				nexin = synum / nloc
+				results.storeCh(repstep*intdt*dt*DT, to, EXPv.x[6+Nt+9*i]*nexin+EXPv.x[5+Nt+9*i] )
+				
+				to = EXPv.x[Nt+7+4*i]
+				nloc = network.cell[ network.netborder.x[to] ].RELAR.size()
+				synum = network.cell[ network.netborder.x[to] ].synCnt	
+				nexin = synum / nloc
+				results.storeCh(repstep*intdt*dt*DT, to, EXPv.x[10+Nt+9*i]*nexin+EXPv.x[9+Nt+9*i] )
+			    }
+			    st = Nt+2+9*Nn
+			    for i = 0, (EXPv.size()-st)/4-1 {
+				to = EXPv.x[st+4*i]
+				nloc = network.cell[ network.netborder.x[to] ].RELAR.size()
+				synum = network.cell[ network.netborder.x[to] ].synCnt	
+				nexin = synum / nloc
+				results.storeCh(repstep*intdt*dt*DT, to, EXPv.x[2+st+4*i]*nexin+EXPv.x[1+st+4*i] )
+			    }
+			}
+		    }
+		    if( (int(t)== EXPt) ) {
+			EXPt = results.doEXP(EXPv)
+			if( EXPv.x[0] == 3 ) { /* Calculate charge? */
+			    calcCh = 1-calcCh /* Switch on/off */
+			    print "Calculating Charges: ", calcCh, " time: ", int( t )
+			}
+		    }
+		    print "time ", int( t )
+		    if( plott ) {
+			view.update()
+		    }
+		}
+	    }
+	    cvode.statistics()
+	}
+	    
+	print "plott ", plott
+	if( plott ) {
+	    view.terminate()
+	}
+	results.terminate()
+	if( saveV ) {
+	    network.saveV(1) /* 1 = save as matrix, 0 = save as vectors */
+	}
+	rtime = stopsw()
+	printf( "%d:%d -- Finished\n\n", rtime/60, rtime%60 )
+    }
+
+endtemplate Simulator

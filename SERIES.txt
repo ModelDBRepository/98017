@@ -1,0 +1,144 @@
+# An example of a parameter file for the multimodule network.
+# The file name must contain the word SERIES. This file is read by the 
+# simulation program MultiModuleWMNet.hoc and by SimLoop, which
+# updates the position in this file (Current row). Commented rows
+# (beginning with #) are not counted.
+#
+# The parameters are organized as follows:
+# A first row with general parameters and parameters concerning the nets 
+#   themselves
+# A second row with cues. Cues have five parameters so this row is
+#   5 * no of cues long. 
+# A third row with experimental parameters of various length
+# The rest of the rows specify connections between modules, one connection per
+#   row. External cells belong to module 0, so specify from as 0 for external
+#   stimulation.
+#
+# Parameters:
+#
+# First row:
+# type : Type of the net (used by analysis programs for backward compatibility)
+#        Should always be 2 for this type of network
+# nmod : Number of modules
+# nrow : The number of rows that this simulation spans
+# t    : The length of the simulation in ms
+# dt   : The time step in ms
+# Ecell: The type of excitatory cell (1 is the only choice right now)
+# NI   : No of I-cells
+# NE   : No of E-cells
+# One can specify several Ecell-NI-NE triplets after one another, one for
+# each module in the network
+#
+# Second row:
+# CueT   : Time of cue
+# CuePos : Length of cue.
+# CuePos : Position of cue as a cell index (cells are placed in an array with
+#          I-cells of first module followed by E-cells of first module 
+#          followed by cells in further modules.
+# CueW   : Width of cue in cells.
+# CueAmp : Amplitude of the cue in uA per cm2
+#
+# Remaining rows:
+# to      : Connection to module
+# from    : Connection from module
+# deldist : The delay distribution 0 = no distribution, 
+#                                  1 = one-point distribution
+#                                  2 = Erlang (gamma) distribution
+# mu      : Mean of delay distribution in ms
+# s2      : Variance of delay distribution in (ms)^2 
+# I->E    : Position of gaba synapses onto E-cell, 
+#           0 = soma, 1 = proximal dendrite, 2 = distal dendrite
+# E->E    : The same for E-cells. Combinations of 0, 1 and 2 can be specified,
+#         : but number must not begin with 0.
+# relNMDA : The relative amount of excitatory (NMDA+AMPA) current passing 
+#           through NMDA channels.
+# Ii      : Synaptic weight from I-cells to I-cells in mS per cm2
+# Ie      : Synaptic weight from E-cells to I-cells in mS per cm2
+# Ei      : Synaptic weight from I-cells to E-cells in mS per cm2
+# Ee      : Synaptic weight from E-cells to E-cells in mS per cm2
+# Jpii    : Height of connection curve (a gaussian on top of a box) connecting
+#           I-cells to I-cells
+# stdii   : Standard deviation of that connection curve in radians.
+# Jpie    : As above for connection from I-cells to E-cells
+# stdie   : Standard deviation of that connection curve in radians.
+# Jpei    : As above for connection from E-cells to I-cells
+# stdei   : Standard deviation of that connection curve in radians.
+# Jpee    : As above for connection from E-cells to E-cells
+# stdee   : Standard deviation of that connection curve in radians.
+Current row:
+00026
+####
+# 1# Inter P->P symm
+####################################################################################################
+#type	nmod	nrow	t0	t	dt	Icell-1	Ecell-1	NI-1	NE-1	Icell-2	Ecell-2	NI-2	NE-2	Save
+3	2	13	100	200	0.02	1	1	32	128	1	1	32	128	C:\DOCUME~1\FREDRI~1\MINADO~1\Neuron\STANDA~1\DATA\070103.2225.13
+#Qtim1	Qlen1	Qpos1	Qwid1	Qamp1	Qtim2	Qlen2	Qpos2	Qwid2	Qamp2	Qtim3	Qlen3	Qpos3	Qwid3	Qamp3	Qtim4	Qlen4	Qpos4	Qwid4	Qamp4
+1000	1000	215	19	2
+#EXP
+-1
+#modul-1
+#to	from	deldist	mu	s2	I->E	E->E	relNMDA	Ii	Ie	Ei	Ee	Jpii	stdii	Jpie	stdie	Jpei	stdei	Jpee	stdee
+1	1	0	0	0	0	21	1	0.65	0.918	1.16	0.9536	-1	-1	-1	-1	-1	-1	3.2	0.2
+1	1	0	0	0	0	21	0	0	0.102	0	0.1064	-1	-1	-1	-1	-1	-1	3.2	0.2
+1	0	0	0	0	0	2	0	0	0.0024	0	0.011	-1	-1	-1	-1	-1	-1	-1	-1
+#modul-2
+#to	from	deldist	mu	s2	I->E	E->E	relNMDA	Ii	Ie	Ei	Ee	Jpii	stdii	Jpie	stdie	Jpei	stdei	Jpee	stdee
+2	2	0	0	0	0	21	1	0.65	0.918	1.16	0.9536	-1	-1	-1	-1	-1	-1	3.2	0.2
+2	2	0	0	0	0	21	0	0	0.102	0	0.1064	-1	-1	-1	-1	-1	-1	3.2	0.2
+2	0	0	0	0	0	2	0	0	0.0024	0	0.011	-1	-1	-1	-1	-1	-1	-1	-1
+#modul-1-2
+#to	from	deldist	mu	s2	I->E	E->E	relNMDA	Ii	Ie	Ei	Ee	Jpii	stdii	Jpie	stdie	Jpei	stdei	Jpee	stdee
+1	2	0	0	0	0	21	1	0	0	0	0.2384	-1	-1	-1	-1	-1	-1	3.2	0.2
+1	2	0	0	0	0	21	0	0	0	0	0.0266	-1	-1	-1	-1	-1	-1	3.2	0.2
+2	1	0	0	0	0	21	1	0	0	0	0.2384	-1	-1	-1	-1	-1	-1	3.2	0.2
+2	1	0	0	0	0	21	0	0	0	0	0.0266	-1	-1	-1	-1	-1	-1	3.2	0.2
+####
+# 2# Inter P->P 25% asymm
+####################################################################################################
+#type	nmod	nrow	t0	t	dt	Icell-1	Ecell-1	NI-1	NE-1	Icell-2	Ecell-2	NI-2	NE-2	Save
+3	2	13	100	200	0.02	1	1	32	128	1	1	32	128	C:\DOCUME~1\FREDRI~1\MINADO~1\Neuron\STANDA~1\DATA\070103.2226.06
+#Qtim1	Qlen1	Qpos1	Qwid1	Qamp1	Qtim2	Qlen2	Qpos2	Qwid2	Qamp2	Qtim3	Qlen3	Qpos3	Qwid3	Qamp3	Qtim4	Qlen4	Qpos4	Qwid4	Qamp4
+2000	7000	215	19	2
+#EXP
+-1
+#modul-1
+#to	from	deldist	mu	s2	I->E	E->E	relNMDA	Ii	Ie	Ei	Ee	Jpii	stdii	Jpie	stdie	Jpei	stdei	Jpee	stdee
+1	1	0	0	0	0	21	1	0.65	0.918	1.16	1.0132	-1	-1	-1	-1	-1	-1	3.2	0.2
+1	1	0	0	0	0	21	0	0	0.102	0	0.1131	-1	-1	-1	-1	-1	-1	3.2	0.2
+1	0	0	0	0	0	2	0	0	0.0024	0	0.011	-1	-1	-1	-1	-1	-1	-1	-1
+#modul-2
+#to	from	deldist	mu	s2	I->E	E->E	relNMDA	Ii	Ie	Ei	Ee	Jpii	stdii	Jpie	stdie	Jpei	stdei	Jpee	stdee
+2	2	0	0	0	0	21	1	0.65	0.918	1.16	0.8940	-1	-1	-1	-1	-1	-1	3.2	0.2
+2	2	0	0	0	0	21	0	0	0.102	0	0.0998	-1	-1	-1	-1	-1	-1	3.2	0.2
+2	0	0	0	0	0	2	0	0	0.0024	0	0.011	-1	-1	-1	-1	-1	-1	-1	-1
+#modul-1-2
+#to	from	deldist	mu	s2	I->E	E->E	relNMDA	Ii	Ie	Ei	Ee	Jpii	stdii	Jpie	stdie	Jpei	stdei	Jpee	stdee
+1	2	0	0	0	0	21	1	0	0	0	0.1788	-1	-1	-1	-1	-1	-1	3.2	0.2
+1	2	0	0	0	0	21	0	0	0	0	0.02	-1	-1	-1	-1	-1	-1	3.2	0.2
+2	1	0	0	0	0	21	1	0	0	0	0.2980	-1	-1	-1	-1	-1	-1	3.2	0.2
+2	1	0	0	0	0	21	0	0	0	0	0.0333	-1	-1	-1	-1	-1	-1	3.2	0.2
+####
+# 3# Inter P->P 50% asymm
+####################################################################################################
+#type	nmod	nrow	t0	t	dt	Icell-1	Ecell-1	NI-1	NE-1	Icell-2	Ecell-2	NI-2	NE-2	Save
+3	2	13	100	200	0.02	1	1	32	128	1	1	32	128
+#Qtim1	Qlen1	Qpos1	Qwid1	Qamp1	Qtim2	Qlen2	Qpos2	Qwid2	Qamp2	Qtim3	Qlen3	Qpos3	Qwid3	Qamp3	Qtim4	Qlen4	Qpos4	Qwid4	Qamp4
+2000	7000	215	19	2
+#EXP
+-1
+#modul-1
+#to	from	deldist	mu	s2	I->E	E->E	relNMDA	Ii	Ie	Ei	Ee	Jpii	stdii	Jpie	stdie	Jpei	stdei	Jpee	stdee
+1	1	0	0	0	0	21	1	0.65	0.918	1.16	1.0728	-1	-1	-1	-1	-1	-1	3.2	0.2
+1	1	0	0	0	0	21	0	0	0.102	0	0.1197	-1	-1	-1	-1	-1	-1	3.2	0.2
+1	0	0	0	0	0	2	0	0	0.0024	0	0.011	-1	-1	-1	-1	-1	-1	-1	-1
+#modul-2
+#to	from	deldist	mu	s2	I->E	E->E	relNMDA	Ii	Ie	Ei	Ee	Jpii	stdii	Jpie	stdie	Jpei	stdei	Jpee	stdee
+2	2	0	0	0	0	21	1	0.65	0.918	1.16	0.8344	-1	-1	-1	-1	-1	-1	3.2	0.2
+2	2	0	0	0	0	21	0	0	0.102	0	0.0931	-1	-1	-1	-1	-1	-1	3.2	0.2
+2	0	0	0	0	0	2	0	0	0.0024	0	0.011	-1	-1	-1	-1	-1	-1	-1	-1
+#modul-1-2
+#to	from	deldist	mu	s2	I->E	E->E	relNMDA	Ii	Ie	Ei	Ee	Jpii	stdii	Jpie	stdie	Jpei	stdei	Jpee	stdee
+1	2	0	0	0	0	21	1	0	0	0	0.1192	-1	-1	-1	-1	-1	-1	3.2	0.2
+1	2	0	0	0	0	21	0	0	0	0	0.0133	-1	-1	-1	-1	-1	-1	3.2	0.2
+2	1	0	0	0	0	21	1	0	0	0	0.3576	-1	-1	-1	-1	-1	-1	3.2	0.2
+2	1	0	0	0	0	21	0	0	0	0	0.0399	-1	-1	-1	-1	-1	-1	3.2	0.2

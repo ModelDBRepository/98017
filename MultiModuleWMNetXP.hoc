@@ -1,0 +1,233 @@
+/* MultiModuleWMNet.hoc creates a network consisting of several modules of
+* inhibitory and excitatory networks.
+* Every module is based on the network in 
+* "The dynamical stability of reverberatory neural circuits" by 
+* Tegnér, Biol. Cybern. 2002 and can recreate the results of that paper
+*
+* Network parameters are loaded from a file named SERIES by loadSettings().
+* Then, simulation() starts the simulation.
+*
+* Author: Fredrik Edin, 2003.
+* Address: freedin@nada.kth.se
+*
+*/
+
+load_file( "nrngui.hoc" )
+
+objref results
+load_file( "Results.hoc" )
+
+objref simulator
+load_file( "Simulator.hoc" )
+
+objref net
+load_file( "Net.hoc" )
+
+objref view
+load_file( "View.hoc" )
+
+
+/* Simulation creates a network with the parameters contained in PARAM,
+* CUE and EXPv, and performs a simulation.
+*
+*(Arg 1, pl: "plot" = Plot simulation. Another or no argument = don't plot.) 
+*/
+objref fi         // file object
+objref PARAM      // Vector with parameters loaded from file
+objref CUE        // Vector with cue parameters
+objref EXPv       // Vector with experimental parameters
+objref netborder  // borders between nets
+objref trajs      // vector for cells whose trajectories are to be plotted
+objref tmp        // temporary object
+strdef pl         // plot string
+strdef pr         // print string
+strdef str        // temporary string
+strdef fstr	  // temporary string
+
+proc simulation() {
+    
+    /* Plot and save? */
+    if( numarg() > 0 ) {
+	pl = $s1
+    } else {
+	pl = "no plot"
+    }
+    if( numarg() > 1 ) {
+	pr = $s2
+    } else {
+	pr = "print"
+    }
+    if( numarg() > 2 ) {
+	saveV = $3 
+    } else {
+	saveV = 0
+    }
+    
+    /* Times */
+    tStart = 0
+    tSyn = PARAM.object(0).x[3]
+    tStop = PARAM.object(0).x[4]
+    DT = PARAM.object(0).x[5] // 0 = variable time step. 
+                              // Values above 0 = dt, fixed time step
+			      
+    /* Data about the nets */
+    nmod = PARAM.object(0).x[1]
+    netborder = new Vector(2*nmod+1)
+    for i = 0, nmod-1 {
+	netborder.x[2*i+1] = PARAM.object(0).x[8+4*i] + netborder.x[2*i]
+	netborder.x[2*i+2] = PARAM.object(0).x[9+4*i] + netborder.x[2*i+1]
+    }
+    nCell = netborder.x[ netborder.size() - 1 ]
+    
+    if( strcmp( pl, "plot" ) == 0 ) {
+	/* View only gives good results for 1-module networks */
+	view = new View( 4, n2-n1+1, tStop, nCell, tStart )
+	view.lInit(tStart)
+	view.rInit(tStart)
+	view.hInit(tStart) 
+	n = 10
+	trajs = new Vector(n) /* Plot only some voltage trajectories */
+	trajs.indgen( netborder.x[ 1 ], int((netborder.x[ 2 ]-netborder.x[ 1 ]) / n ) )
+	print "Cells to be monitored"
+	for i = 0, n-1 {
+	    print trajs.x[i]
+	}
+	view.someTrajectories(trajs)
+    } else {
+	view = new View(1, 1) 
+    }
+    
+    /* Core of the function */
+    results = new Results( nCell, netborder, EXPv, tStop, tStart )
+    net = new Net(results, netborder, PARAM, CUE, EXPv )
+    results.setNet(net)
+    if( EXPv.size() > 1 ) {
+	simulator = new Simulator( net, results, view, DT, tStop, tSyn, 0.01, 1, saveV, EXPv )
+    } else {
+	simulator = new Simulator( net, results, view, DT, tStop, tSyn, 0.01, 1, saveV )
+    }
+    if( strcmp( pl, "plot" ) == 0 ) {
+	view.reinit( net, results )
+    }
+    calcCh = 1 /* For calculating relative NMDA */ 
+    simulator.run( pl, pr, calcCh ) //, "no print" ) /* Start the simulation */
+    net.saveConn()
+    net.saveParams()
+    
+    if( strcmp( pl, "plot" ) == 0 ) {
+	view.plotAPs()
+	view.plotHist()
+    } 
+    
+    /* Save results and parameters */
+    fi = new File()
+    fi.aopen( "Parameters.txt" )
+    fi.printf( "Stimulation till puckel:\n" )
+    fi.printf( "Nat:\tTid:\tLangd:\tPos:\tBredd:\tAmp:\n" )
+    for i = 0, CUE.size()/5-1 {
+	fi.printf( "%d\t%d\t%d\t%d\t%g\n", CUE.x[5*i], CUE.x[5*i+1], CUE.x[5*i+2], CUE.x[5*i+3], CUE.x[5*i+4] )
+    }
+    fi.close()
+    
+    fi.wopen( "Q.txt" )
+    for i = 0, ( CUE.size() )/5-1 {
+	fi.printf( "%d\t%d\t%d\t%d\t%g\n", CUE.x[5*i], CUE.x[5*i+1], CUE.x[5*i+2], CUE.x[5*i+3], CUE.x[5*i+4] )
+    }
+    fi.close()
+    
+    fi.wopen( "QKey.txt" )
+    fi.printf( "Tid:\n" )
+    fi.printf( "Langd:\n" )
+    fi.printf( "Position:\n" )
+    fi.printf( "Bredd:\n" )
+    fi.printf( "Amplitud:\n" )
+    fi.close()
+}
+
+
+/* Loads settings for the simulations
+*
+* return: 1 if settings were successfully loaded, 0 otherwise
+*/
+func loadSettings() {
+    fi = new File()
+    fi.ropen("SERIES.txt")
+    tmp = new StringFunctions()
+    pl = "#"
+    
+    /* Read position of current row */
+    readComment()
+    fi.gets( str )
+    readComment()
+    curr = fi.scanvar()
+    fi.gets(str)  // Reads last of curr-line
+    readComment()
+    /* read until current row */
+    for i = 0, curr - 1 {
+	fi.gets(str)
+	readComment()
+    }
+	
+    
+    /* make sure there is something left to read */
+    start = fi.tell()
+    fi.gets( str )
+    if( tmp.len( str ) < 2 ) {
+	fi.close()
+	return 0
+    }
+    
+    /* read parameters */
+    fi.seek( start )
+    type = fi.scanvar()
+    nmod = fi.scanvar()
+    nrow = fi.scanvar()
+    fi.seek( start )
+    PARAM = new List()
+    CUE = new Vector()
+    EXPv = new Vector()
+    for j = 0, nrow-1 {
+	PARAM.append( new Vector() )
+	start = fi.tell()
+	fi.gets( str )
+	end = fi.tell()
+	fi.seek( start )
+	while( start < end-2 ) {
+	    PARAM.object( j ).append( fi.scanvar() )
+	    start = fi.tell()
+	}
+	fi.gets( str ) // just to finish the line
+	readComment()
+    }
+    fi.close()
+    if( PARAM.object(1).size()%5 == 0 ) {
+	CUE = PARAM.object(1).c
+    }
+    EXPv = PARAM.object(2).c
+    PARAM.remove(1)
+    PARAM.remove(1)
+    /*print "PARAM"
+    for i = 0, PARAM.count()-1 {
+	PARAM.object(i).printf()
+    }
+    CUE.printf()
+    EXPv.printf()*/
+    return 1
+}
+
+/* Auxiliary function reading comments until next non-comment is found */
+proc readComment() { local i
+    pos = fi.tell()
+    i = 0
+    while( fi.gets(fstr) && tmp.substr( fstr, pl ) == 0 ) {
+	pos = fi.tell()
+	i = i + 1
+	//print i, " ", fstr
+    }
+    fi.seek( pos )
+}
+
+if( loadSettings() ) {
+    simulation("no plot", "no print", 0 )
+}
+quit()

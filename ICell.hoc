@@ -1,0 +1,613 @@
+/* ICell is a model of a hippocampal interneuron, such as described in Wang
+* and Buszaki, Gamma Oscillation by Synaptic Inhibition in a Hippocampal 
+* Interneuronal Network Model, J.Neurosci, 1996, 16(20):6402-6413.
+
+* ICell is a one-compartment model. Its area is 100um^2 to equal density 
+* and absolute currents. Its characteristic features are: 
+*
+* 1) AHP of -15 mV relative to the spike threshold of -55 mV, which is 
+* due to a small maximum gK and a fast IK gating process.  
+* 2) Ability to fire repetitive spikes at high frequencies.
+*
+*
+* All internal representations of currents and conductances are in nA and uS, 
+* as is the case in most Neuron mechanisms, but functions use the units
+* uA / cm2 and mS / cm2, just like in the original article. 
+*
+* The model has six types of synapses in every compartment, one summating
+* and one non-summating synapse of types GABA, AMPA and NMDA. The summating
+* synapses represent external stimulation to the cell (many uncorrelated
+* sources of low intensity), and the non-summating synapses represent
+* synapses between the cells of a net.
+*
+* Synapses are stored in a vector. Note that only synapses with netcons 
+* connected to them are actually made, so as to reduce simulation time. 
+*
+* Every cell has two types of IDs. One is a public string, "ICell", so that a 
+* program can tell it apart from other types of cells. A second ID is an 
+* int specified by the program to help identify an unknown cell.
+*
+* Author: Fredrik Edin, 2003.
+* Address: freedin@nada.kth.se
+*
+*/
+
+begintemplate ICell 
+    
+    /* public functions */
+    /* set functions */
+    public setWsyn         // sets synaptic weights
+    public setV            // sets membrane potential
+    public setIapp         // sets excitatory drive of cells
+    public activate_syn    // activates synapses
+    public connect_pre     // connects the cell to a presynaptic cell
+    public disconnectCell  // disconnects the cell from all other cells
+    public addCue          // adds a cue to the cell
+    public poissonExternal // sets excitatory poisonnian spike train drive
+    public setID           // sets the secondary ID of the cell
+    
+    /* get functions */
+    public getWsyn         // gets a synaptic weight
+    public getGsyn         // gets a synaptic conductance
+    public getIsyn         // gets synaptic currents
+    public getIapp         // gets the electrode current/external drive
+    public getGNa          // gets Na conductance
+    public getGK           // gets K conductance
+    public getGleak        // gets leak conductance
+    public getINa          // gets Na current
+    public getIK           // gets K current
+    public getIleak        // gets leak current
+    public getQ_I          // gets cue currents
+    public getV            // gets membrane potential
+    public getArea         // gets the area in cm2
+    public getPreID        // gets the secondary ID of a presynaptic cell
+    public spike           // checks whether a spike has occurred
+    
+    /* public objects and variables */
+    public soma     // The soma
+    public vvec     // Voltage trace vector
+    public pre_list // List with NetCons
+    public iapp     // Excitatory drive objects
+    public syn      // Array with synapses
+    public ID       // ID object of the cell = "ICell"
+    public ID_2     // Second ID of the cell. Can be set by the user
+    public synCnt   // The number of synapses in the cell
+    public RELAR    // Vector with relative compartment sizes
+    public cue      // Vector with cues
+    public netstim  // 
+    
+    /* objects */
+    create soma        // The soma
+    objref vvec        // Voltage trace vector
+    objref pre_list[6] // Array with NetCons Lists (pre_list0-pre_list4)
+    objref pre_list0
+    objref pre_list1
+    objref pre_list2
+    objref pre_list3
+    objref pre_list4
+    objref pre_list5
+    strdef ID           // ID of the cell = "ICell"
+    objref RELAR        // Vector with relative compartment sizes
+    objref iapp         // Excitatory drive object
+    objref syn[6]       // Array with synapses
+    objref net_c        // Temporary NetCon object
+    objref cue          // List with cues
+    objref cuepos       // Vector with cue positions
+    objref netstim      // An excitatory poissonian spike train source
+    objref cell         // A presynaptic cell
+    strdef str          // Temporary string
+    
+    /* Creates a new ICell object 
+    *
+    *(Arg 1, speed : rate of K-channel activation and Na-channel inactivation)
+    *(Arg 2, syn.e : synaptic reversal potential)
+    *(Arg 3, recV  : Record voltage trace of cell. 1 = yes, 0 or nothing = no)
+    *(Arg 4, recSpk: Record spike times of cell. 1 = yes, 0 or nothing = no)
+    */
+    proc init() {
+	
+	synCnt = 6
+	
+	vvec = new Vector()
+	cue = new List()
+	cuepos = new Vector()
+	ID = "ICell"
+	netstim = new List()
+		
+	/* Initial constants, etc */
+	AREA = 100 /* 1e-6 cm2 area */
+	pre_list0 = new List()
+	pre_list1 = new List()
+	pre_list2 = new List()
+	pre_list3 = new List()
+	pre_list4 = new List()
+	pre_list5 = new List()
+	objref pre_list[synCnt]
+	pre_list[0] = pre_list0
+	pre_list[1] = pre_list1
+	pre_list[2] = pre_list2
+	pre_list[3] = pre_list3
+	pre_list[4] = pre_list4
+	pre_list[5] = pre_list5
+	
+	RELAR = new Vector(1,1) /* For compatibility, easy when using cells with several compartments */
+	
+	soma {
+	    
+	    /* geometry: parameters specified for a 100um² area*/
+	    nseg = 1
+	    diam = sqrt( AREA / PI )
+	    L = diam
+	    /* Conversion uA/cm2 -> nA and mS/cm2 -> uS */
+	    f_surf = area(0.5) / 100000
+	    /* Conversion uA/cm2 -> mA/cm2 and mS/cm2 -> S/cm2 */
+	    f_conv = 1 / 1000
+	    
+	    /* Insert channels */
+	    insert hhI
+	    ek  = -90
+	    ena = 55
+	    
+	    /* Synapses onto soma are created in connect_pre */
+	    
+	    iapp = new IClamp(0.5)
+	    iapp.del = 0
+	    cue.append( iapp )
+    
+	}
+    }
+    
+    
+    /* SET FUNCTIONS */
+    
+    
+    
+    /* Sets the weights of the synapses. If a fourth argument is included,
+    * the third is ignored. This is faster.
+    *
+    * Arg 1, exin: 0 = GABA synapse
+    *              1 = AMPA synapse
+    *              2 = NMDA synapse
+    *              3 = External GABA synapse
+    *              4 = External AMPA synapse
+    *              5 = External NMDA synapse
+    * Arg 2, w   : synaptic weight in mS/cm2
+    *(Arg 3, ind : The index of the netcon whose weight is to be changed)
+    * return: 1 if the weight was changed, 0 otherwise
+    */
+    func setWsyn() { local i, w, k, res
+	
+	res = 0
+	
+	exin = $1
+	w = $2 * f_surf
+	if( exin == 3 || exin == 4 ) {
+	    w = w * .955
+	} else if( exin == 5 ) {
+	    w = w * .63
+	}
+	if( numarg() > 2 ) {
+	    ind = $3
+	    //print "Synapse type and weight"
+	    //print pre_list[ exin ].object(ind).syn(), syn[exin], w
+	    pre_list[ exin ].object( ind ).weight = w
+	    res = 1
+	} else {
+	    //print "Synapse type and weight"
+	    //if( pre_list[ exin ].count() > 0 ) {
+	    //	print pre_list[ exin ].object(0).syn(), syn[exin], w
+	    //}
+	    for i = 0, pre_list[ exin ].count()-1 {
+		pre_list[ exin ].object(i).weight = w
+	    }
+	    res = 1
+	}
+	return res
+    }
+    
+    /* Sets the membrane potential of the cells 
+    * 
+    * Arg 1, v: membrane potential in mV */
+    proc setV() {
+	soma.v(0.5) = $1
+	//print "ICell.setV", soma.v(0.5)
+    }
+
+    /* Sets the excitatory drive of the cell 
+    *
+    * Arg: $1    Current in uA/cm2 
+    * Arg: $2    Start time of current (ms)
+    * Arg: $3    Duration of current (ms) */
+    proc setIapp() {
+	soma {
+	    iapp.amp = $1 * f_surf  /* Current in nA */
+	    iapp.del = $2	    
+	    iapp.dur = $3
+	}
+    }
+    
+    /* Activates or deactivates synapses
+    *
+    * Arg 1: 1 if activating, 0 if inactivating
+    *(Arg 2, exin : 0 = GABA synapse
+    *               1 = AMPA synapse
+    *               2 = NMDA synapse
+    *               3 = External GABA synapse
+    *               4 = External AMPA synapse
+    *               5 = External NMDA synapse)
+    */
+    proc activate_syn() { local i
+	act = $1
+	if( numarg() < 2 ) {
+	    m1 = 0
+	    m2 = synCnt - 1
+	} else {
+	    exin = $2
+	    m1 = exin
+	    m2 = exin
+	}   
+	for j = m1, m2 {
+	    //print "synapse"
+	    //if( pre_list[j].count()>0 ) {
+	    //	print pre_list[j].object(0).syn(), syn[j]
+	    //}
+	    for i = 0, pre_list[j].count()-1 {
+		pre_list[j].object(i).active(act)
+	    }
+	}
+    }
+       
+    /* Connect the cell to a presynaptic cell. Synaptic threshold is zero
+    * Weight is zero until set separately.
+    *
+    * Arg 1       : presynatic cell
+    * Arg 2, delay: axonal delay in ms 
+    * Arg 3, exin : 0 = GABA synapse
+    *               1 = AMPA synapse
+    *               2 = NMDA synapse
+    *               3 = External GABA synapse
+    *               4 = External AMPA synapse
+    *               5 = External NMDA synapse
+    *(Arg 4: If there is a fourth argument, the precell is a netstim and not a
+    *        regular cell.
+    */
+    func connect_pre() { local delay, exin, i
+	
+	delay = $2
+	exin = $3
+	
+	/* Creating synapses. */
+	if( pre_list[ exin ].count() == 0 ) {
+	    if( exin == 0 ) {
+		soma {
+	    	    syn[exin] = new gabaR(0.5) /* Internal GABA */
+		    Erev_gabaR = -70
+		}
+	    } else if( exin == 1 ) {
+		soma {
+		    syn[exin] = new AMPA_S(0.5) /* Internal AMPA */
+		}
+	    } else if( exin == 2 ) {
+		soma {
+		    syn[exin] = new nmdaR(0.5) /* Internal NMDA */
+		}
+	    } else if( exin == 3 ) {
+		soma {
+		    syn[exin] = new Exp2Syn(0.5) /* For external GABA */
+		    syn[exin].tau1 = 1/9
+		    syn[exin].tau2 = 10
+		    syn[exin].e = -70
+		}
+	    } else if( exin == 4 ) {
+		soma {
+		    syn[exin] = new Exp2Syn(0.5) /* For external AMPA */
+		    syn[exin].tau1 = 1/9
+		    syn[exin].tau2 = 2
+		    syn[exin].e = 0
+		}
+	    } else if( exin == 5 ) {
+		soma {
+		    syn[exin] = new nmdaSUM(0.5) /* For external NMDA */
+		    syn[exin].tau1 = 1/0.6
+		    syn[exin].tau2 = 100
+		    syn[exin].e = 0
+		}
+	    }
+	}	
+	    
+	/* Connect the cells but set weight to 0. Synaptic threshold = 0 */
+	if( numarg() > 3 ) {
+	    pre_list[exin].append( new NetCon( $o1, syn[exin], 0, delay, 0 ) )
+	} else {
+	    $o1.soma pre_list[exin].append( new NetCon( &v(0.5), syn[exin], 0, delay, 0 ) )
+	}
+	return pre_list[exin].count()-1
+    }
+    
+    /* Disconnects the cell from the net */
+    proc disconnectCell() {
+	for i = 0, synCnt - 1 {
+	    pre_list[i].remove_all()
+	}
+    }
+    
+    /* Add a cue( IClamp )
+    *
+    * Arg 1, amp: Stimulus amplitude in uA/cm2
+    * Arg 2, del: Stimulus onset in ms
+    * Arg 3, dur: Stimulus length in ms
+    * Return, n : The index of the cue
+    */
+    func addCue() { local amp, del, dur
+	amp = $1
+	del = $2
+	dur = $3
+	soma { 
+	    cue.append( new IClamp(0.5) )
+	    cuepos.append( i )
+	    cue.object( cue.count() - 1 ).amp = amp * f_surf
+	    cue.object( cue.count() - 1 ).del = del
+	    cue.object( cue.count() - 1 ).dur = dur
+	}
+	return cue.count() - 1
+    }
+	    
+    /* Connect an external poissonian source of action 
+    * potentials of weight w and rate rate. It has an AMPA synapse.
+    * 
+    * Arg 1, rate  : The rate of the spike train in Hz.
+    * Arg 2, wAMPA : The conductance of the spike train in mS/cm2
+    * Arg 3, wNMDA : The conductance of the spike train in mS/cm2
+    *(Arg 4, rseed : The seed of the MyNetStim object)
+    */
+    proc poissonExternal() { local rate, w, i, j, rel, n, rseed
+	rate = $1
+	wAMPA = $2 * f_surf
+	wNMDA = $3 * f_surf
+	soma netstim.append( new MyNetStim(0.5) )
+	n = netstim.count()-1
+	if( numarg() > 3 ) {
+	    rseed = $4
+	    netstim.object(n).seed(rseed)
+	}
+	netstim.object(n).noise = 1
+	netstim.object(n).interval = 1000 / rate
+	netstim.object(n).number = int( 100000 / netstim.object(n).interval ) + 1
+	netstim.object(n).start = 0
+	if( wAMPA > 0 ) { 
+	    /* AMPA synapses 0.955 = max saturation degree at lo fire freq */
+	    if( pre_list[ 4 ].count() == 0 ) {
+		soma {
+		    syn[4] = new Exp2Syn(0.5) /* For external AMPA */
+		    syn[4].tau1 = 1/9
+		    syn[4].tau2 = 2
+		    syn[4].e = 0
+		}
+	    }
+	    pre_list[4].append(new NetCon(netstim.object(n),syn[4],0,0,wAMPA*.955))
+	}
+	if( wNMDA > 0 ) {
+	    /* NMDA synapses: 0.63 = max saturation degree at lo fire freq */  
+	    if( pre_list[ 5 ].count() == 0 ) {
+		soma {
+		    syn[5] = new nmdaSUM(0.5) /* For external NMDA */
+		    syn[5].tau1 = 1/0.6
+		    syn[5].tau2 = 100
+		    syn[5].e = 0
+		}
+	    }
+	    pre_list[5].append( new NetCon( netstim.object(n), syn[5],0,0,wNMDA*0.63))
+	}
+    }
+    
+    /* Sets the secondary ID of the cell
+    *
+    * Arg 1, ID_2: The ID
+    */
+    proc setID() {
+	ID_2 = $1
+    }
+    
+    /* GET FUNCTIONS */
+    
+    
+    /* Returns the synaptic weight
+    *
+    * Arg 1, exin : 0 = GABA synapse
+    *               1 = AMPA synapse
+    *               2 = NMDA synapse
+    *               3 = External GABA synapse
+    *               4 = External AMPA synapse
+    *               5 = External NMDA synapse
+    * Arg 2, ind : The index of the presynaptic cell
+    * Return: the synaptic weight in mS/cm2
+    */
+    func getWsyn() { local exin, w, loc, k, c
+	exin = $1
+	ind = $2
+	c = pre_list[ exin ].count()
+	if( ind < c ) {
+	    w = pre_list[ exin ].object(ind).weight / f_surf
+	    if( exin == 3 || exin == 4 ) {
+		w = w / 0.955
+	    } else if( exin == 5 ) {
+		w = w / 0.63
+	    }
+	} else {
+	    w = 0
+	}
+	return w
+    }
+    
+    /* Gets the synaptic conductance
+    *
+    *(Arg 1, exin : 0 = GABA synapse
+    *               1 = AMPA synapse
+    *               2 = NMDA synapse
+    *               3 = External GABA synapse
+    *               4 = External AMPA synapse
+    *               5 = External NMDA synapse)
+    * Return: the synaptic conductance in mS/cm2 
+    */
+    func getGsyn() { local exin, ext, n1, n2, i, g
+	if( numarg() > 0 ) {
+	    exin = $1
+	    n1 = exin
+	    n2 = exin
+	} else {
+	    n1 = 0
+	    n2 = synCnt - 1
+	}
+	g = 0
+	for i = n1, n2 {
+	    g += syn[ i ].g / f_surf
+	}
+	return g
+    }
+    
+    /* Gets the synaptic current
+    *
+    *(Arg 1, exin : 0 = GABA synapse
+    *               1 = AMPA synapse
+    *               2 = NMDA synapse
+    *               3 = External GABA synapse
+    *               4 = External AMPA synapse
+    *               5 = External NMDA synapse)
+    * Return: the synaptic current in uA/cm2 */
+    func getIsyn() { local i, j, exin, n1, n2
+	if( numarg() > 0 ) {
+	    exin = $1
+	    n1 = exin
+	    n2 = exin
+	} else {
+	    n1 = 0
+	    n2 = synCnt - 1
+	}
+	i = 0
+	for j = n1, n2 {
+	    if( pre_list[j].count() > 0 ) {
+		i += syn[j].i / f_surf
+	    }
+	} 
+	return i
+    }
+    
+    /* Gets the cue current
+    *
+    *(Arg 1, exin: 0 = GABA synapse
+    *              1 = AMPA synapse
+    *              2 = NMDA synapse
+    *              3 = Second version of NMDA synapse
+    *              4 = External GABA synapse
+    *              5 = External AMPA synapse
+    *              6 = External NMDA synapse
+    *              7 = Second version of external NMDA synapse)
+    * Return: the cue current in uA/cm2 */
+    func getQ_I() { local i, j, exin, n1, n2
+	i = 0
+	for j = 0, cue.count()-1 {
+	    if( t >= cue.object(j).del && t < cue.object(j).del + cue.object(j).dur ) {
+		i -= cue.object(j).amp
+	    }
+	} 
+	return i
+    }
+
+
+    /* Get the electrode current/external drive 
+    * 
+    * Return    : the potential in mV
+    */
+    func getIapp() { local i
+	i = iapp.i / f_surf
+	return i
+    }
+    
+   /* Gets the peak conductance of INa
+    *
+    * return: conductance of INa in mS/cm2
+    */
+    func getGNa() { local g
+	g = soma.gna_hhI / f_conv
+	return g
+    }
+    
+    /* Gets the conductance of IK
+    *
+    * return: conductance of IK in mS/cm2
+    */
+    func getGK() {
+	return soma.gk_hhI / f_conv
+    }
+    
+    /* Gets the conductance of Ileak
+    *
+    * return: conductance of Ileak in mS/cm2
+    */
+    func getGleak() {
+	return soma.gl_hhI / f_conv
+    }
+    
+    /* Gets the INa
+    *
+    * Return: current of INa in uA/cm2
+    */
+    func getINa() {
+	return soma.ina_hhI / f_conv
+    }
+    
+    /* Gets the IK
+    *
+    * Return: current of IK in uA/cm2
+    */
+    func getIK() {
+	return soma.ik_hhI / f_conv
+    }
+    
+    /* Gets the Ileak
+    *
+    * Return: current of Ileak in uA/cm2
+    */
+    func getIleak() {
+	return soma.il_hhI / f_conv
+    }
+    
+    /* Get the cell potential 
+    * 
+    * Return    : the potential in mV
+    */
+    func getV() { 
+	return soma.v( 0.5 )
+    }
+    
+    /* Get the cell area 
+    * 
+    * Return : the area in cm2
+    */
+    func getArea() {
+	return area(0.5)/1e8
+    }
+    
+    /* Gets the presynaptic cell secondary identity
+    *
+    * Arg 1, preL : Index of the pre_list
+    * Arg 2, ind  : The index in the pre_list
+    */
+    func getPreID() { local preL, ind
+	preL = $1
+	ind = $2
+	return pre_list[preL].object(ind).precell.ID_2
+    }
+    
+    /* Check whether a spike has occurred
+    *
+    * Return: 1 if a spike has occurred, 0 if not */
+    func spike() {
+	if( oldv < -10 && ( oldv = soma.v(0.5) ) >= -10 ) { 
+	    return 1
+	}
+	return 0
+    }    
+    
+endtemplate ICell
+   
