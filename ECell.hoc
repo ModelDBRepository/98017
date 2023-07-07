@@ -1,5 +1,5 @@
 /* An three-compartment excitatory cell. The cell is an implementation of
-* the pyramidal cell model in Tegnér, Compte and Wang, Biol. Cybern. 2002.
+* the pyramidal cell model in TegnÃ©r, Compte and Wang, Biol. Cybern. 2002.
 * 
 * Differences from the model in the article are
 * 1: A one-state nmda channel with parameters fit to the two-state model
@@ -236,7 +236,7 @@ begintemplate ECell
 	/* Dendrite 1, proximal dendrite */
 	soma[1] {
 	    
-	    /* geometry: parameters specified for a 100um² area*/
+	    /* geometry: parameters specified for a 100umÂÂ² area*/
 	    nseg = 1
 	    diam = sqrt( AREA / PI )
 	    L = diam
@@ -260,7 +260,7 @@ begintemplate ECell
 	/* Dendrite 2 */
 	soma[2] {
 	    
-	    /* geometry: parameters specified for a 100um² area*/
+	    /* geometry: parameters specified for a 100umÂÂ² area*/
 	    nseg = 1
 	    diam = sqrt( AREA / PI )
 	    L = diam
