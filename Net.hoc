@@ -287,7 +287,7 @@ begintemplate Net
 			sprint( str, "%s%s", str, "d2" )   
 		    }
 		}
-		sprint( str, "%s%s", str, " på " )
+		sprint( str, "%s%s", str, " pĞ‘Ğµ " )
 		if( i == 0 ) {
 		    locI.copy( tmp )
 		    strEI = str

@@ -487,7 +487,7 @@ begintemplate LabCell
 	Xampa = $5
 	Xnmda = $6
 	nCell = $7
-	tStop = 1500 //FIX ME hitta lagom längd
+	tStop = 1500 //FIX ME hitta lagom lÃ¤ngd
 	if( numarg() > 7 ) {
 	    pl = $s8
 	} else {
