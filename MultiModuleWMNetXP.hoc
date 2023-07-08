@@ -2,7 +2,7 @@
 * inhibitory and excitatory networks.
 * Every module is based on the network in 
 * "The dynamical stability of reverberatory neural circuits" by 
-* Tegnér, Biol. Cybern. 2002 and can recreate the results of that paper
+* TegnÃ©r, Biol. Cybern. 2002 and can recreate the results of that paper
 *
 * Network parameters are loaded from a file named SERIES by loadSettings().
 * Then, simulation() starts the simulation.

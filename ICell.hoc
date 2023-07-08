@@ -134,7 +134,7 @@ begintemplate ICell
 	
 	soma {
 	    
-	    /* geometry: parameters specified for a 100um² area*/
+	    /* geometry: parameters specified for a 100umÂ² area*/
 	    nseg = 1
 	    diam = sqrt( AREA / PI )
 	    L = diam

@@ -27,7 +27,7 @@ begintemplate Results
     public cohGroups      // Calculates to coherence of and between groups of cells
     public setLFP         // Stores LFPs during a simulation
     public LFP            // Creates a population LFP time trace
-    public oscfreq        // /*FIX ME, ej färdig*/
+    public oscfreq        // /*FIX ME, ej fÃ¤rdig*/
     public popVec         // Computes the population vector
     public setAHP         // Sets the AHP of the cells in the net 
     public getAHP         // Gets the AHP of the cells in the net
@@ -1383,9 +1383,9 @@ begintemplate Results
 	    }
 	    return 0
 	} else if( EXP == 3 || EXP == 4 || EXP == 5 ) {
-	    /* Detta experiment hittar nästa tidpunkt för av/på-stängning
-	    * av strömmätning. Observera att första tidpunkten alltid är 
-	    * avstängning */
+	    /* Detta experiment hittar nÃ¤sta tidpunkt fÃ¶r av/pÃ¥-stÃ¤ngning
+	    * av strÃ¶mmÃ¤tning. Observera att fÃ¶rsta tidpunkten alltid Ã¤r 
+	    * avstÃ¤ngning */
 	    t0 = 0
 	    i = 1
 	    while( t > t0 ) {
